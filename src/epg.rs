@@ -1140,11 +1140,15 @@ impl EpgProgram {
         }
     }
 
+    pub fn name(&self) -> &str {
+        self.name.as_deref().unwrap_or("NO TITLE")
+    }
+
     pub fn end_at(&self) -> DateTime<Jst> {
         self.start_at + self.duration
     }
 
-    fn update(&mut self, event: &EitEvent) {
+    pub fn update(&mut self, event: &EitEvent) {
         self.start_at = event.start_time.clone();
         self.duration = event.duration.clone();
         self.scrambled = event.scrambled;

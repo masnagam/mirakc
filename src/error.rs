@@ -24,6 +24,8 @@ pub enum Error {
     ClockNotSynced,
     #[fail(display = "Program not found")]
     ProgramNotFound,
+    #[fail(display = "Record not found")]
+    RecordNotFound,
     #[fail(display = "Session not found")]
     SessionNotFound,
     #[fail(display = "Access denied")]

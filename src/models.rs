@@ -243,6 +243,7 @@ impl EpgGenre {
 #[derive(Clone)]
 pub enum TunerUserInfo {
     Job { name: String },
+    Recorder { name: String },
     Tracker { stream_id: MpegTsStreamId },
     Web { id: String, agent: Option<String> },
 }
@@ -251,6 +252,7 @@ impl TunerUserInfo {
     fn get_mirakurun_model(&self) -> (String, Option<String>) {
         match self {
             Self::Job { name } => (format!("job:{}", name), None),
+            Self::Recorder { name } => (format!("recorder:{}", name), None),
             Self::Tracker { stream_id } => (format!("tracker:{}", stream_id), None),
             Self::Web { id, agent } => (id.clone(), agent.clone()),
         }
@@ -261,6 +263,7 @@ impl fmt::Display for TunerUserInfo {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Job { name } => write!(f, "Job({})", name),
+            Self::Recorder { name } => write!(f, "Recorder({})", name),
             Self::Tracker { stream_id } =>
                 write!(f, "Tracker({})", stream_id),
             Self::Web { id, agent: None } =>
@@ -275,8 +278,8 @@ impl fmt::Display for TunerUserInfo {
 pub struct TunerUserPriority(i32);
 
 impl TunerUserPriority {
-    const MIN: i32 = -128;
-    const MAX: i32 = 128;
+    pub const MIN: i32 = -128;
+    pub const MAX: i32 = 128;
     pub const GRAB: TunerUserPriority = TunerUserPriority(Self::MAX);
 
     pub fn is_grab(&self) -> bool {
@@ -657,6 +660,17 @@ impl From<AudioComponentDescriptor> for MirakurunProgramAudio {
     fn from(audio: AudioComponentDescriptor) -> Self {
         Self::new(audio.sampling_rate, audio.component_type)
     }
+}
+
+// timeshift record
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TimeshiftRecordModel {
+    pub name: String,
+    pub start_time: DateTime<Jst>,
+    pub end_time: DateTime<Jst>,
+    pub recording: bool,
 }
 
 #[cfg(test)]

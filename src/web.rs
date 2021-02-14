@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
@@ -20,13 +19,15 @@ use tokio::sync::mpsc;
 use crate::airtime_tracker;
 use crate::chunk_stream::ChunkStream;
 use crate::command_util::*;
-use crate::config::{Config, ServerAddr, FilterConfig, PostFilterConfig};
+use crate::config::{Config, ServerAddr};
 use crate::datetime_ext::Jst;
 use crate::error::Error;
 use crate::epg::*;
+use crate::filter::*;
 use crate::models::*;
 use crate::mpeg_ts_stream::*;
 use crate::string_table::*;
+use crate::timeshift::*;
 use crate::tuner::*;
 
 #[cfg(not(test))]
@@ -39,11 +40,17 @@ type EpgActor = Epg;
 #[cfg(test)]
 type EpgActor = actix::actors::mocker::Mocker<Epg>;
 
+#[cfg(not(test))]
+type TimeshiftManagerActor = TimeshiftManager;
+#[cfg(test)]
+type TimeshiftManagerActor = actix::actors::mocker::Mocker<TimeshiftManager>;
+
 pub async fn serve(
     config: Arc<Config>,
     string_table: Arc<StringTable>,
     tuner_manager: Addr<TunerManager>,
     epg: Addr<Epg>,
+    timeshift_manager: Addr<TimeshiftManager>,
 ) -> Result<(), Error> {
     let server_config = config.server.clone();
     let mut server = actix_web::HttpServer::new(
@@ -53,6 +60,7 @@ pub async fn serve(
                 .data(string_table.clone())
                 .data(tuner_manager.clone())
                 .data(epg.clone())
+                .data(timeshift_manager.clone())
                 .wrap(actix_web::middleware::Logger::default())
                 .wrap(actix_web::middleware::DefaultHeaders::new()
                       .header("Server", server_name()))
@@ -136,6 +144,12 @@ impl actix_web::ResponseError for Error {
                     reason: None,
                     errors: Vec::new(),
                 }),
+            Error::RecordNotFound =>
+                actix_web::HttpResponse::NotFound().json(ErrorBody {
+                    code: actix_web::http::StatusCode::NOT_FOUND.as_u16(),
+                    reason: None,
+                    errors: Vec::new(),
+                }),
             Error::AccessDenied =>
                 actix_web::HttpResponse::Forbidden().json(ErrorBody {
                     code: actix_web::http::StatusCode::FORBIDDEN.as_u16(),
@@ -167,6 +181,10 @@ fn create_api_service() -> impl actix_web::dev::HttpServiceFactory {
         .service(get_channel_service_stream)
         .service(get_service_stream)
         .service(get_program_stream)
+        .service(get_timeshift_records)
+        .service(get_timeshift_record)
+        .service(get_timeshift_programs)
+        .service(get_timeshift_stream)
         .service(get_iptv_playlist)
         .service(get_iptv_epg)
         .service(get_docs)
@@ -399,6 +417,65 @@ async fn get_program_stream(
     }
 
     result
+}
+
+#[actix_web::get("/timeshift")]
+async fn get_timeshift_records(
+    timeshift_manager: actix_web::web::Data<Addr<TimeshiftManagerActor>>,
+) -> ApiResult {
+    timeshift_manager.send(QueryTimeshiftRecordsMessage).await?
+        .map(|records| actix_web::HttpResponse::Ok().json(records))
+}
+
+#[actix_web::get("/timeshift/{record}")]
+async fn get_timeshift_record(
+    timeshift_manager: actix_web::web::Data<Addr<TimeshiftManagerActor>>,
+    path: actix_web::web::Path<TimeshiftRecordPath>,
+) -> ApiResult {
+    timeshift_manager.send(QueryTimeshiftRecordMessage {
+        record: path.record.clone(),
+    }).await?
+        .map(|record| actix_web::HttpResponse::Ok().json(record))
+}
+
+#[actix_web::get("/timeshift/{record}/programs")]
+async fn get_timeshift_programs(
+    timeshift_manager: actix_web::web::Data<Addr<TimeshiftManagerActor>>,
+    path: actix_web::web::Path<TimeshiftRecordPath>,
+) -> ApiResult {
+    timeshift_manager.send(QueryTimeshiftProgramsMessage {
+        record: path.record.clone(),
+    }).await?
+        .map(|programs| programs.into_iter()
+             .map(MirakurunProgram::from).collect::<Vec<MirakurunProgram>>())
+        .map(|programs| actix_web::HttpResponse::Ok().json(programs))
+}
+
+#[actix_web::get("/timeshift/{record}/stream")]
+async fn get_timeshift_stream(
+    config: actix_web::web::Data<Arc<Config>>,
+    timeshift_manager: actix_web::web::Data<Addr<TimeshiftManagerActor>>,
+    path: actix_web::web::Path<TimeshiftRecordPath>,
+    user: TunerUser,
+    stream_query: actix_web::web::Query<TimeshiftStreamQuery>,
+    filter_setting: FilterSetting,
+) -> ApiResult {
+    let data = mustache::MapBuilder::new()
+        .build();
+
+    let mut builder = FilterPipelineBuilder::new(data);
+    builder.add_pre_filters(
+        &config.pre_filters, &filter_setting.pre_filters)?;
+    builder.add_post_filters(
+        &config.post_filters, &filter_setting.post_filters)?;
+    let (filters, content_type) = builder.build();
+
+    let stream = timeshift_manager.send(StartTimeshiftStreamingMessage {
+        record: path.record.clone(),
+        program: stream_query.program,
+    }).await??;
+
+    streaming(&config, user, stream, filters, content_type, None).await
 }
 
 #[actix_web::get("/iptv/playlist")]
@@ -692,6 +769,16 @@ struct ProgramPath {
     id: MirakurunProgramId,
 }
 
+#[derive(Deserialize)]
+struct TimeshiftRecordPath {
+    record: String,
+}
+
+#[derive(Deserialize)]
+struct TimeshiftStreamQuery {
+    program: Option<MirakurunProgramId>,
+}
+
 // actix-web uses the serde_urlencoded crate for parsing the query in an URL.
 // Unfortunately, the Vec support is out of scope for the serde_urlencoded
 // crate and it's suggested to use the serde_qs crate.
@@ -893,133 +980,6 @@ fn is_private_ipv6_addr(ip: Ipv6Addr) -> bool {
     }
 }
 
-// filters
-
-struct FilterPipelineBuilder {
-    data: mustache::Data,
-    filters: Vec<String>,
-    content_type: String,
-}
-
-impl FilterPipelineBuilder {
-    fn new(data: mustache::Data) -> Self {
-        FilterPipelineBuilder {
-            data,
-            filters: Vec::new(),
-            content_type: "video/MP2T".to_string(),
-        }
-    }
-
-    fn build(self) -> (Vec<String>, String) {
-        (self.filters, self.content_type)
-    }
-
-    fn add_pre_filters(
-        &mut self,
-        pre_filters: &HashMap<String, FilterConfig>,
-        names: &Vec<String>
-    ) -> Result<(), Error> {
-        for name in names.iter() {
-            if pre_filters.contains_key(name) {
-                self.add_pre_filter(&pre_filters[name], name)?;
-            } else {
-                log::warn!("No such pre-filter: {}", name);
-            }
-        }
-        Ok(())
-    }
-
-    fn add_pre_filter(
-        &mut self,
-        config: &FilterConfig,
-        name: &str,
-    ) -> Result<(), Error> {
-        let filter = self.make_filter(&config.command)?;
-        if filter.is_empty() {
-            log::warn!("pre-filter({}) not valid", name);
-        } else {
-            self.filters.push(filter);
-        }
-        Ok(())
-    }
-
-    fn add_service_filter(
-        &mut self,
-        config: &FilterConfig,
-    ) -> Result<(), Error> {
-        let filter = self.make_filter(&config.command)?;
-        if filter.is_empty() {
-            log::warn!("service-filter not valid");
-        } else {
-            self.filters.push(filter);
-        }
-        Ok(())
-    }
-
-    fn add_decode_filter(
-        &mut self,
-        config: &FilterConfig
-    ) -> Result<(), Error> {
-        let filter = self.make_filter(&config.command)?;
-        if filter.is_empty() {
-            log::warn!("decode-filter not valid");
-        } else {
-            self.filters.push(filter);
-        }
-        Ok(())
-    }
-
-    fn add_program_filter(
-        &mut self,
-        config: &FilterConfig,
-    ) -> Result<(), Error> {
-        let filter = self.make_filter(&config.command)?;
-        if filter.is_empty() {
-            log::warn!("program-filter not valid");
-        } else {
-            self.filters.push(filter);
-        }
-        Ok(())
-    }
-
-    fn add_post_filters(
-        &mut self,
-        post_filters: &HashMap<String, PostFilterConfig>,
-        names: &Vec<String>
-    ) -> Result<(), Error> {
-        for name in names.iter() {
-            if post_filters.contains_key(name) {
-                self.add_post_filter(&post_filters[name], name)?;
-            } else {
-                log::warn!("No such post-filter: {}", name);
-            }
-        }
-        Ok(())
-    }
-
-    fn add_post_filter(
-        &mut self,
-        config: &PostFilterConfig,
-        name: &str,
-    ) -> Result<(), Error> {
-        let filter = self.make_filter(&config.command)?;
-        if filter.is_empty() {
-            log::warn!("post-filter({}) not valid", name);
-        } else {
-            self.filters.push(filter);
-            if let Some(content_type) = config.content_type.as_ref() {
-                self.content_type = content_type.clone();
-            }
-        }
-        Ok(())
-    }
-
-    fn make_filter(&self, command: &str) -> Result<String, Error> {
-        let template = mustache::compile_str(command)?;
-        Ok(template.render_data_to_string(&self.data)?.trim().to_string())
-    }
-}
-
 // Took from https://github.com/rust-lang/rust/blob/master/src/librustdoc/html/escape.rs
 
 #[inline(always)]
@@ -1078,6 +1038,7 @@ mod tests {
                 .data(config_for_test())
                 .data(tuner_manager_for_test())
                 .data(epg_for_test())
+                .data(timeshift_manager_for_test())
                 .wrap(AccessControl)
                 .service(create_api_service())).await;
         actix_web::test::call_service(&mut app, req).await.into()
@@ -1289,6 +1250,24 @@ mod tests {
                                   decode).as_str()).await;
             assert!(res.status() == actix_web::http::StatusCode::NOT_FOUND);
         }
+    }
+
+    #[actix_rt::test]
+    async fn test_get_timeshift_records() {
+        let res = get("/api/timeshift").await;
+        assert!(res.status() == actix_web::http::StatusCode::OK);
+    }
+
+    #[actix_rt::test]
+    async fn test_get_timeshift_record() {
+        let res = get("/api/timeshift/test").await;
+        assert!(res.status() == actix_web::http::StatusCode::OK);
+    }
+
+    #[actix_rt::test]
+    async fn test_get_timeshift_programs() {
+        let res = get("/api/timeshift/test/programs").await;
+        assert!(res.status() == actix_web::http::StatusCode::OK);
     }
 
     #[actix_rt::test]
@@ -1573,6 +1552,28 @@ mod tests {
                 Box::<Option<Result<EpgProgram, Error>>>::new(Some(result))
             } else if let Some(_) = msg.downcast_ref::<RemoveAirtimeMessage>() {
                 Box::<Option<()>>::new(Some(()))
+            } else {
+                unimplemented!();
+            }
+        })).start()
+    }
+
+    fn timeshift_manager_for_test() -> Addr<TimeshiftManagerActor> {
+        TimeshiftManagerActor::mock(Box::new(|msg, _ctx| {
+            if let Some(_) = msg.downcast_ref::<QueryTimeshiftRecordsMessage>() {
+                Box::<Option<Result<Vec<TimeshiftRecordModel>, Error>>>::new(
+                    Some(Ok(Vec::new())))
+            } else if let Some(_) = msg.downcast_ref::<QueryTimeshiftRecordMessage>() {
+                Box::<Option<Result<_, Error>>>::new(
+                    Some(Ok(TimeshiftRecordModel {
+                        name: "test".to_string(),
+                        start_time: Jst::now(),
+                        end_time: Jst::now(),
+                        recording: true,
+                    })))
+            } else if let Some(_) = msg.downcast_ref::<QueryTimeshiftProgramsMessage>() {
+                Box::<Option<Result<Vec<EpgProgram>, Error>>>::new(
+                    Some(Ok(Vec::new())))
             } else {
                 unimplemented!();
             }

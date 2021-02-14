@@ -9,11 +9,13 @@ mod eit_feeder;
 mod epg;
 mod error;
 //mod fs_util;
+mod filter;
 mod job;
 mod models;
 mod mpeg_ts_stream;
 mod service_scanner;
 mod string_table;
+mod timeshift;
 mod tokio_snippet;
 mod tracing_ext;
 mod tuner;
@@ -72,9 +74,11 @@ async fn main() -> Result<(), Error> {
     let _job_manager = job::start(
         config.clone(), tuner_manager.clone(), epg.clone(), eit_feeder.clone());
 
+    let timeshift_manager = timeshift::start(config.clone(), tuner_manager.clone());
+
     web::serve(
         config.clone(), string_table.clone(), tuner_manager.clone(),
-        epg.clone()).await?;
+        epg.clone(), timeshift_manager.clone()).await?;
 
     Ok(())
 }
