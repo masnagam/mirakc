@@ -7,8 +7,10 @@ use chrono::DateTime;
 use serde::Deserialize;
 use tokio::prelude::*;
 use tokio::io::BufReader;
+use tokio::fs::File;
 
 use crate::config::{Config, TimeshiftConfig};
+use crate::chunk_stream::*;
 use crate::datetime_ext::*;
 use crate::eit_feeder::*;
 use crate::error::Error;
@@ -28,6 +30,8 @@ pub fn start(
 
 // timeshift manager
 
+type TimeshiftStream = MpegTsStream<ChunkStream<BufReader<File>>>;
+
 pub struct TimeshiftManager {
     config: Arc<Config>,
     tuner_manager: Addr<TunerManager>,
@@ -44,7 +48,7 @@ impl TimeshiftManager {
         &self,
         record_id: &str,
         program_id: Option<MirakurunProgramId>,
-    ) -> Result<MpegTsStream, Error> {
+    ) -> Result<TimeshiftStream, Error> {
         let record = self.records.get(record_id).ok_or(Error::RecordNotFound)?;
         record.start_streaming(program_id)
     }
@@ -149,7 +153,7 @@ impl TimeshiftManager {
             user,
         }).await??;
 
-        let stop_trigger = MpegTsStreamStopTrigger::new(
+        let stop_trigger = TunerStreamStopTrigger::new(
             stream.id(), tuner_manager.clone().recipient());
 
         let mut pipeline = spawn_pipeline(cmds, stream.id())?;
@@ -305,7 +309,7 @@ impl Handler<QueryTimeshiftProgramsMessage> for TimeshiftManager {
 }
 
 #[derive(Message)]
-#[rtype(result = "Result<MpegTsStream, Error>")]
+#[rtype(result = "Result<TimeshiftStream, Error>")]
 pub struct StartTimeshiftStreamingMessage {
     pub record: String,
     pub program: Option<MirakurunProgramId>,
@@ -405,7 +409,7 @@ impl TimeshiftRecord {
     fn start_streaming(
         &self,
         program_id: Option<MirakurunProgramId>,
-    ) -> Result<MpegTsStream, Error> {
+    ) -> Result<TimeshiftStream, Error> {
         let point = match program_id {
             Some(id) => {
                 &self.programs.iter()

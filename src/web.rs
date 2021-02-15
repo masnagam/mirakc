@@ -299,7 +299,7 @@ async fn get_channel_stream(
         user: user.clone(),
     }).await??;
 
-    let stop_triggers = vec![MpegTsStreamStopTrigger::new(
+    let stop_triggers = vec![TunerStreamStopTrigger::new(
         stream.id(), tuner_manager.get_ref().clone().recipient())];
 
     streaming(&config, user, stream, filters, content_type, stop_triggers).await
@@ -411,7 +411,7 @@ async fn get_program_stream(
     ).await?;
 
     let stop_triggers = vec![
-        MpegTsStreamStopTrigger::new(
+        TunerStreamStopTrigger::new(
             stream.id(), tuner_manager.get_ref().clone().recipient()),
         stop_trigger,
     ];
@@ -484,7 +484,7 @@ async fn get_timeshift_stream(
         program: stream_query.program,
     }).await??;
 
-    streaming(&config, user, stream, filters, content_type, Vec::new()).await
+    streaming(&config, user, stream, filters, content_type, ()).await
 }
 
 #[actix_web::get("/iptv/playlist")]
@@ -644,20 +644,24 @@ async fn do_get_service_stream(
         user: user.clone(),
     }).await??;
 
-    let stop_triggers = vec![MpegTsStreamStopTrigger::new(
+    let stop_triggers = vec![TunerStreamStopTrigger::new(
         stream.id(), tuner_manager.get_ref().clone().recipient())];
 
     streaming(&config, user, stream, filters, content_type, stop_triggers).await
 }
 
-async fn streaming(
+async fn streaming<S, T>(
     config: &Config,
     user: TunerUser,
-    stream: MpegTsStream,
+    stream: MpegTsStream<S>,
     filters: Vec<String>,
     content_type: String,
-    stop_triggers: Vec<MpegTsStreamStopTrigger>,
-) -> ApiResult {
+    stop_triggers: T,
+) -> ApiResult
+where
+    S: Stream<Item = io::Result<Bytes>> + Unpin + 'static,
+    T: Unpin + 'static,
+{
     if filters.is_empty() {
         do_streaming(
             user, stream, content_type, stop_triggers, config.server.stream_time_limit).await
@@ -717,18 +721,19 @@ async fn streaming(
     }
 }
 
-async fn do_streaming<S>(
+async fn do_streaming<S, T>(
     user: TunerUser,
     stream: S,
     content_type: String,
-    stop_triggers: Vec<MpegTsStreamStopTrigger>,
+    stop_trigger: T,
     time_limit: u64,
 ) -> ApiResult
 where
     // actix_web::dev::HttpResponseBuilder::streaming() requires 'static...
     S: Stream<Item = io::Result<Bytes>> + Unpin + 'static,
+    T: Unpin + 'static,
 {
-    let stream = MpegTsStreamTerminator::new(stream, stop_triggers);
+    let stream = MpegTsStreamTerminator::new(stream, stop_trigger);
 
     // No data is sent to the client until the first TS packet comes from the
     // streaming pipeline.
@@ -1318,13 +1323,11 @@ mod tests {
         let user = user_for_test(0.into());
 
         let result = do_streaming(
-            user.clone(), futures::stream::empty(), "video/MP2T".to_string(), Vec::new(),
-            1000).await;
+            user.clone(), futures::stream::empty(), "video/MP2T".to_string(), (), 1000).await;
         assert_matches!(result, Err(Error::ProgramNotFound));
 
         let result = do_streaming(
-            user.clone(),  futures::stream::pending(), "video/MP2T".to_string(), Vec::new(),
-            1).await;
+            user.clone(),  futures::stream::pending(), "video/MP2T".to_string(), (), 1).await;
         assert_matches!(result, Err(Error::StreamingTimedOut));
     }
 
@@ -1472,11 +1475,11 @@ mod tests {
                     let (mut tx, stream) = BroadcasterStream::new_for_test();
                     let _ = tx.try_send(Bytes::from("hi"));
                     let result = Ok(MpegTsStream::new(Default::default(), stream));
-                    Box::<Option<Result<MpegTsStream, Error>>>::new(Some(result))
+                    Box::<Option<Result<_, Error>>>::new(Some(result))
                 } else {
                     let (_, stream) = BroadcasterStream::new_for_test();
                     let result = Ok(MpegTsStream::new(Default::default(), stream));
-                    Box::<Option<Result<MpegTsStream, Error>>>::new(Some(result))
+                    Box::<Option<Result<_, Error>>>::new(Some(result))
                 }
             } else {
                 unimplemented!();

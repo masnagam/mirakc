@@ -21,7 +21,7 @@ pub async fn track_airtime<T, E>(
     stream_id: MpegTsStreamId,
     tuner_manager: Addr<T>,
     epg: Addr<E>,
-) -> Result<MpegTsStreamStopTrigger, Error>
+) -> Result<TunerStreamStopTrigger, Error>
 where
     T: Actor,
     T: Handler<StartStreamingMessage>,
@@ -56,7 +56,7 @@ where
 
     let (input, output) = pipeline.take_endpoints().unwrap();
 
-    let stop_trigger = MpegTsStreamStopTrigger::new(
+    let stop_trigger = TunerStreamStopTrigger::new(
         stream.id(), tuner_manager.clone().recipient());
 
     actix::spawn(async {

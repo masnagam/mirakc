@@ -12,13 +12,12 @@ use serde::Serialize;
 use crate::command_util;
 use crate::epg::*;
 use crate::models::*;
-use crate::mpeg_ts_stream::*;
 use crate::tuner::*;
 
 pub struct ServiceScanner<A: Actor> {
     command: String,
     channels: Vec<EpgChannel>,
-    stream_manager: Addr<A>,
+    tuner_manager: Addr<A>,
 }
 
 // TODO: The following implementation has code clones similar to
@@ -37,9 +36,9 @@ where
     pub fn new(
         command: String,
         channels: Vec<EpgChannel>,
-        stream_manager: Addr<A>,
+        tuner_manager: Addr<A>,
     ) -> Self {
-        ServiceScanner { command, channels, stream_manager }
+        ServiceScanner { command, channels, tuner_manager }
     }
 
     pub async fn scan_services(
@@ -50,7 +49,7 @@ where
         let mut results = Vec::new();
         for channel in self.channels.iter() {
             let result = match Self::scan_services_in_channel(
-                &channel, &self.command, &self.stream_manager).await {
+                &channel, &self.command, &self.tuner_manager).await {
                 Ok(services) => {
                     let mut map = IndexMap::new();
                     for service in services.into_iter() {
@@ -75,7 +74,7 @@ where
     async fn scan_services_in_channel(
         channel: &EpgChannel,
         command: &str,
-        stream_manager: &Addr<A>,
+        tuner_manager: &Addr<A>,
     ) -> Result<Vec<EpgService>, Error> {
         log::debug!("Scanning services in {}...", channel.name);
 
@@ -84,13 +83,13 @@ where
             priority: (-1).into(),
         };
 
-        let stream = stream_manager.send(StartStreamingMessage {
+        let stream = tuner_manager.send(StartStreamingMessage {
             channel: channel.clone(),
             user
         }).await??;
 
-        let stop_trigger = MpegTsStreamStopTrigger::new(
-            stream.id(), stream_manager.clone().recipient());
+        let stop_trigger = TunerStreamStopTrigger::new(
+            stream.id(), tuner_manager.clone().recipient());
 
         let template = mustache::compile_str(command)?;
         let data = mustache::MapBuilder::new()
@@ -167,6 +166,7 @@ mod tests {
     use super::*;
     use crate::broadcaster::BroadcasterStream;
     use crate::error::Error;
+    use crate::mpeg_ts_stream::MpegTsStream;
 
     type Mock = actix::actors::mocker::Mocker<TunerManager>;
 

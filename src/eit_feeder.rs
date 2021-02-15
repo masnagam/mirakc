@@ -15,7 +15,6 @@ use crate::datetime_ext::*;
 use crate::error::Error;
 use crate::epg::*;
 use crate::models::*;
-use crate::mpeg_ts_stream::*;
 use crate::tuner::*;
 use crate::command_util;
 
@@ -167,7 +166,7 @@ impl EitCollector {
             user
         }).await??;
 
-        let stop_trigger = MpegTsStreamStopTrigger::new(
+        let stop_trigger = TunerStreamStopTrigger::new(
             stream.id(), tuner_manager.clone().recipient());
 
         let template = mustache::compile_str(command)?;

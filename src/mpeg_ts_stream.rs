@@ -1,32 +1,31 @@
 use std::io;
 use std::pin::Pin;
 
-use actix::prelude::*;
 use actix_web::web::Bytes;
 use tokio::io::{AsyncWrite, AsyncWriteExt};
 use tokio::stream::{Stream, StreamExt};
 
-use crate::broadcaster::BroadcasterStream;
-use crate::tuner::StopStreamingMessage;
 pub use crate::tuner::TunerSubscriptionId as MpegTsStreamId;
 
-pub struct MpegTsStream {
+pub struct MpegTsStream<S> {
     id: MpegTsStreamId,
-    stream: BroadcasterStream,
+    stream: S,
 }
 
-impl MpegTsStream {
-    pub fn new(
-        id: MpegTsStreamId,
-        stream: BroadcasterStream,
-    ) -> Self {
+impl<S> MpegTsStream<S> {
+    pub fn new(id: MpegTsStreamId, stream: S) -> Self {
         MpegTsStream { id, stream, }
     }
 
     pub fn id(&self) -> MpegTsStreamId {
         self.id
     }
+}
 
+impl<S> MpegTsStream<S>
+where
+    S: Stream<Item = io::Result<Bytes>> + Unpin,
+{
     pub async fn pipe<W>(self, writer: W)
     where
         W: AsyncWrite + Unpin,
@@ -35,37 +34,17 @@ impl MpegTsStream {
     }
 }
 
-impl Stream for MpegTsStream {
-    type Item = io::Result<Bytes>;
+impl<S> Stream for MpegTsStream<S>
+where
+    S: Stream + Unpin,
+{
+    type Item = S::Item;
 
     fn poll_next(
         mut self: Pin<&mut Self>,
         cx: &mut std::task::Context
     ) -> std::task::Poll<Option<Self::Item>> {
         Pin::new(&mut self.stream).poll_next(cx)
-    }
-}
-
-pub struct MpegTsStreamStopTrigger {
-    id: MpegTsStreamId,
-    recipient: Recipient<StopStreamingMessage>,
-}
-
-impl MpegTsStreamStopTrigger {
-    pub fn new(
-        id: MpegTsStreamId,
-        recipient: Recipient<StopStreamingMessage>
-    ) -> Self {
-        Self { id, recipient }
-    }
-}
-
-impl Drop for MpegTsStreamStopTrigger {
-    fn drop(&mut self) {
-        log::debug!("{}: Closing...", self.id);
-        let _ = self.recipient.do_send(StopStreamingMessage {
-            id: self.id
-        });
     }
 }
 
@@ -91,10 +70,7 @@ pub struct MpegTsStreamTerminator<S, T> {
     _stop_trigger: T,
 }
 
-impl<S, T> MpegTsStreamTerminator<S, T>
-where
-    S: Stream<Item = io::Result<Bytes>> + Unpin
-{
+impl<S, T> MpegTsStreamTerminator<S, T> {
     pub fn new(inner: S, _stop_trigger: T) -> Self {
         Self { inner, _stop_trigger }
     }
@@ -102,7 +78,7 @@ where
 
 impl<S, T> Stream for MpegTsStreamTerminator<S, T>
 where
-    S: Stream<Item = io::Result<Bytes>> + Unpin,
+    S: Stream + Unpin,
     T: Unpin,
 {
     type Item = S::Item;
@@ -115,8 +91,9 @@ where
     }
 }
 
-async fn pipe<W>(mut stream: MpegTsStream, mut writer: W)
+async fn pipe<S, W>(mut stream: MpegTsStream<S>, mut writer: W)
 where
+    S: Stream<Item = io::Result<Bytes>> + Unpin,
     W: AsyncWrite + Unpin,
 {
     loop {
@@ -164,13 +141,13 @@ mod tests {
 
     #[actix_rt::test]
     async fn test_pipe() {
-        let (mut tx, stream) = BroadcasterStream::new_for_test();
+        let (mut tx, rx) = tokio::sync::mpsc::channel(1);
 
-        let stream = MpegTsStream::new(Default::default(), stream);
+        let stream = MpegTsStream::new(Default::default(), rx);
         let writer = TestWriter::new(b"hello");
         let handle = tokio::spawn(stream.pipe(writer));
 
-        let result = tx.send(Bytes::from("hello")).await;
+        let result = tx.send(Ok(Bytes::from("hello"))).await;
         assert!(result.is_ok());
 
         drop(tx);

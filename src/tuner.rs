@@ -21,6 +21,8 @@ pub fn start(config: Arc<Config>) -> Addr<TunerManager> {
 
 // identifiers
 
+type TunerStream = MpegTsStream<BroadcasterStream>;
+
 #[derive(Clone, Copy, PartialEq)]
 #[cfg_attr(test, derive(Debug, Default))]
 pub struct TunerSessionId {
@@ -248,11 +250,11 @@ impl fmt::Display for StartStreamingMessage {
 }
 
 impl Message for StartStreamingMessage {
-    type Result = Result<MpegTsStream, Error>;
+    type Result = Result<TunerStream, Error>;
 }
 
 impl Handler<StartStreamingMessage> for TunerManager {
-    type Result = ActorResponse<Self, MpegTsStream, Error>;
+    type Result = ActorResponse<Self, TunerStream, Error>;
 
     fn handle(
         &mut self,
@@ -599,6 +601,29 @@ impl TunerSession {
 impl Drop for TunerSession {
     fn drop(&mut self) {
         log::info!("{}: Deactivated", self.id);
+    }
+}
+
+pub struct TunerStreamStopTrigger {
+    id: TunerSubscriptionId,
+    recipient: Recipient<StopStreamingMessage>,
+}
+
+impl TunerStreamStopTrigger {
+    pub fn new(
+        id: TunerSubscriptionId,
+        recipient: Recipient<StopStreamingMessage>
+    ) -> Self {
+        Self { id, recipient }
+    }
+}
+
+impl Drop for TunerStreamStopTrigger {
+    fn drop(&mut self) {
+        log::debug!("{}: Closing...", self.id);
+        let _ = self.recipient.do_send(StopStreamingMessage {
+            id: self.id
+        });
     }
 }
 

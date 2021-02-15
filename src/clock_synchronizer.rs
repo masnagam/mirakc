@@ -13,13 +13,12 @@ use serde::Serialize;
 use crate::command_util;
 use crate::epg::*;
 use crate::models::*;
-use crate::mpeg_ts_stream::*;
 use crate::tuner::*;
 
 pub struct ClockSynchronizer<A: Actor> {
     command: String,
     channels: Vec<EpgChannel>,
-    stream_manager: Addr<A>,
+    tuner_manager: Addr<A>,
 }
 
 // TODO: The following implementation has code clones similar to
@@ -38,9 +37,9 @@ where
     pub fn new(
         command: String,
         channels: Vec<EpgChannel>,
-        stream_manager: Addr<A>,
+        tuner_manager: Addr<A>,
     ) -> Self {
-        ClockSynchronizer { command, channels, stream_manager }
+        ClockSynchronizer { command, channels, tuner_manager }
     }
 
     pub async fn sync_clocks(
@@ -52,7 +51,7 @@ where
 
         for channel in self.channels.iter() {
             let result = match Self::sync_clocks_in_channel(
-                &channel, &self.command, &self.stream_manager).await {
+                &channel, &self.command, &self.tuner_manager).await {
                 Ok(clocks) => {
                     let mut map = HashMap::new();
                     for clock in clocks.into_iter() {
@@ -78,7 +77,7 @@ where
     async fn sync_clocks_in_channel(
         channel: &EpgChannel,
         command: &str,
-        stream_manager: &Addr<A>,
+        tuner_manager: &Addr<A>,
     ) -> Result<Vec<SyncClock>, Error> {
         log::debug!("Synchronizing clocks in {}...", channel.name);
 
@@ -87,13 +86,13 @@ where
             priority: (-1).into(),
         };
 
-        let stream = stream_manager.send(StartStreamingMessage {
+        let stream = tuner_manager.send(StartStreamingMessage {
             channel: channel.clone(),
             user
         }).await??;
 
-        let stop_trigger = MpegTsStreamStopTrigger::new(
-            stream.id(), stream_manager.clone().recipient());
+        let stop_trigger = TunerStreamStopTrigger::new(
+            stream.id(), tuner_manager.clone().recipient());
 
         let template = mustache::compile_str(command)?;
         let data = mustache::MapBuilder::new()
