@@ -1,3 +1,4 @@
+use std::fmt;
 use std::io;
 use std::pin::Pin;
 
@@ -5,25 +6,29 @@ use actix_web::web::Bytes;
 use tokio::io::{AsyncWrite, AsyncWriteExt};
 use tokio::stream::{Stream, StreamExt};
 
-pub use crate::tuner::TunerSubscriptionId as MpegTsStreamId;
-
-pub struct MpegTsStream<S> {
-    id: MpegTsStreamId,
+pub struct MpegTsStream<T, S> {
+    id: T,
     stream: S,
 }
 
-impl<S> MpegTsStream<S> {
-    pub fn new(id: MpegTsStreamId, stream: S) -> Self {
+impl<T, S> MpegTsStream<T, S> {
+    pub fn new(id: T, stream: S) -> Self {
         MpegTsStream { id, stream, }
     }
+}
 
-    pub fn id(&self) -> MpegTsStreamId {
+impl<T, S> MpegTsStream<T, S>
+where
+    T: Copy,
+{
+    pub fn id(&self) -> T {
         self.id
     }
 }
 
-impl<S> MpegTsStream<S>
+impl<T, S> MpegTsStream<T, S>
 where
+    T: fmt::Display + Copy + Unpin,
     S: Stream<Item = io::Result<Bytes>> + Unpin,
 {
     pub async fn pipe<W>(self, writer: W)
@@ -34,8 +39,9 @@ where
     }
 }
 
-impl<S> Stream for MpegTsStream<S>
+impl<T, S> Stream for MpegTsStream<T, S>
 where
+    T: Unpin,
     S: Stream + Unpin,
 {
     type Item = S::Item;
@@ -91,8 +97,9 @@ where
     }
 }
 
-async fn pipe<S, W>(mut stream: MpegTsStream<S>, mut writer: W)
+async fn pipe<T, S, W>(mut stream: MpegTsStream<T, S>, mut writer: W)
 where
+    T: fmt::Display + Copy + Unpin,
     S: Stream<Item = io::Result<Bytes>> + Unpin,
     W: AsyncWrite + Unpin,
 {
@@ -143,7 +150,7 @@ mod tests {
     async fn test_pipe() {
         let (mut tx, rx) = tokio::sync::mpsc::channel(1);
 
-        let stream = MpegTsStream::new(Default::default(), rx);
+        let stream = MpegTsStream::new(0, rx);
         let writer = TestWriter::new(b"hello");
         let handle = tokio::spawn(stream.pipe(writer));
 

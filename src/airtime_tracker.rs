@@ -11,14 +11,13 @@ use crate::datetime_ext::*;
 use crate::epg::*;
 use crate::error::Error;
 use crate::models::*;
-use crate::mpeg_ts_stream::*;
 use crate::tuner::*;
 
 pub async fn track_airtime<T, E>(
     command: &str,
     channel: &EpgChannel,
     program: &EpgProgram,
-    stream_id: MpegTsStreamId,
+    stream_id: TunerSubscriptionId,
     tuner_manager: Addr<T>,
     epg: Addr<E>,
 ) -> Result<TunerStreamStopTrigger, Error>

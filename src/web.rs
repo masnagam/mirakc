@@ -1,3 +1,4 @@
+use std::fmt;
 use std::fmt::Write as _;
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
@@ -650,17 +651,18 @@ async fn do_get_service_stream(
     streaming(&config, user, stream, filters, content_type, stop_triggers).await
 }
 
-async fn streaming<S, T>(
+async fn streaming<T, S, D>(
     config: &Config,
     user: TunerUser,
-    stream: MpegTsStream<S>,
+    stream: MpegTsStream<T, S>,
     filters: Vec<String>,
     content_type: String,
-    stop_triggers: T,
+    stop_triggers: D,
 ) -> ApiResult
 where
+    T: fmt::Display + Copy + Unpin + 'static,
     S: Stream<Item = io::Result<Bytes>> + Unpin + 'static,
-    T: Unpin + 'static,
+    D: Unpin + 'static,
 {
     if filters.is_empty() {
         do_streaming(
@@ -721,17 +723,17 @@ where
     }
 }
 
-async fn do_streaming<S, T>(
+async fn do_streaming<S, D>(
     user: TunerUser,
     stream: S,
     content_type: String,
-    stop_trigger: T,
+    stop_trigger: D,
     time_limit: u64,
 ) -> ApiResult
 where
     // actix_web::dev::HttpResponseBuilder::streaming() requires 'static...
     S: Stream<Item = io::Result<Bytes>> + Unpin + 'static,
-    T: Unpin + 'static,
+    D: Unpin + 'static,
 {
     let stream = MpegTsStreamTerminator::new(stream, stop_trigger);
 
@@ -1474,11 +1476,11 @@ mod tests {
                 if msg.channel.channel == "ch" {
                     let (mut tx, stream) = BroadcasterStream::new_for_test();
                     let _ = tx.try_send(Bytes::from("hi"));
-                    let result = Ok(MpegTsStream::new(Default::default(), stream));
+                    let result = Ok(MpegTsStream::new(TunerSubscriptionId::default(), stream));
                     Box::<Option<Result<_, Error>>>::new(Some(result))
                 } else {
                     let (_, stream) = BroadcasterStream::new_for_test();
-                    let result = Ok(MpegTsStream::new(Default::default(), stream));
+                    let result = Ok(MpegTsStream::new(TunerSubscriptionId::default(), stream));
                     Box::<Option<Result<_, Error>>>::new(Some(result))
                 }
             } else {

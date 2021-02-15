@@ -21,7 +21,7 @@ pub fn start(config: Arc<Config>) -> Addr<TunerManager> {
 
 // identifiers
 
-type TunerStream = MpegTsStream<BroadcasterStream>;
+type TunerStream = MpegTsStream<TunerSubscriptionId, BroadcasterStream>;
 
 #[derive(Clone, Copy, PartialEq)]
 #[cfg_attr(test, derive(Debug, Default))]

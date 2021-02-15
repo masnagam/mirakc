@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use crate::datetime_ext::{serde_jst, serde_duration_in_millis, Jst};
 use crate::eit_feeder::{AudioComponentDescriptor, ComponentDescriptor };
 use crate::epg::{EpgChannel, EpgService, EpgProgram};
-use crate::mpeg_ts_stream::MpegTsStreamId;
+use crate::tuner::TunerSubscriptionId;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[derive(Deserialize, Serialize)]
@@ -244,7 +244,7 @@ impl EpgGenre {
 pub enum TunerUserInfo {
     Job { name: String },
     Recorder { name: String },
-    Tracker { stream_id: MpegTsStreamId },
+    Tracker { stream_id: TunerSubscriptionId },
     Web { id: String, agent: Option<String> },
 }
 

@@ -175,8 +175,8 @@ mod tests {
         let mock = Mock::mock(Box::new(|msg, _ctx| {
             if let Some(_) = msg.downcast_ref::<StartStreamingMessage>() {
                 let (_, stream) = BroadcasterStream::new_for_test();
-                let result: Result<_, Error> = Ok(MpegTsStream::new(
-                    Default::default(), stream));
+                let result: Result<_, Error> =
+                    Ok(MpegTsStream::new(TunerSubscriptionId::default(), stream));
                 Box::new(Some(result))
             } else {
                 unimplemented!();

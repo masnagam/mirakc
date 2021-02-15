@@ -30,7 +30,7 @@ pub fn start(
 
 // timeshift manager
 
-type TimeshiftStream = MpegTsStream<ChunkStream<BufReader<File>>>;
+type TimeshiftStream = MpegTsStream<usize, ChunkStream<BufReader<File>>>;
 
 pub struct TimeshiftManager {
     config: Arc<Config>,
