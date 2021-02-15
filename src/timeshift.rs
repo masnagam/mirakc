@@ -1,12 +1,15 @@
 use std::collections::HashMap;
 use std::fmt;
+use std::io;
+use std::pin::Pin;
 use std::sync::Arc;
+use std::task::{Context, Poll};
 
 use actix::prelude::*;
 use chrono::DateTime;
 use serde::Deserialize;
 use tokio::prelude::*;
-use tokio::io::BufReader;
+use tokio::io::{AsyncSeek, BufReader, SeekFrom};
 use tokio::fs::File;
 
 use crate::config::{Config, TimeshiftConfig};
@@ -30,7 +33,7 @@ pub fn start(
 
 // timeshift manager
 
-type TimeshiftStream = MpegTsStream<usize, ChunkStream<BufReader<File>>>;
+type TimeshiftStream = MpegTsStream<usize, ChunkStream<TimeshiftFile>>;
 
 pub struct TimeshiftManager {
     config: Arc<Config>,
@@ -44,13 +47,13 @@ impl TimeshiftManager {
         TimeshiftManager { config, tuner_manager, records, }
     }
 
-    fn start_streaming(
+    fn create_stream_source(
         &self,
         record_id: &str,
         program_id: Option<MirakurunProgramId>,
-    ) -> Result<TimeshiftStream, Error> {
+    ) -> Result<TimeshiftStreamSource, Error> {
         let record = self.records.get(record_id).ok_or(Error::RecordNotFound)?;
-        record.start_streaming(program_id)
+        record.create_stream_source(program_id)
     }
 
     fn start_recording(&mut self, name: &str) {
@@ -115,7 +118,7 @@ impl TimeshiftManager {
 
         let channel = config.channels.iter()
             .filter(|config| !config.disabled)
-            .find(|config| config.name == name)
+            .find(|config| config.name == timeshift_config.channel)
             .cloned()
             .map(EpgChannel::from)
             .ok_or(Error::ChannelNotFound)?;
@@ -322,7 +325,7 @@ impl fmt::Display for StartTimeshiftStreamingMessage {
 }
 
 impl Handler<StartTimeshiftStreamingMessage> for TimeshiftManager {
-    type Result = MessageResult<StartTimeshiftStreamingMessage>;
+    type Result = ResponseFuture<Result<TimeshiftStream, Error>>;
 
     fn handle(
         &mut self,
@@ -330,7 +333,10 @@ impl Handler<StartTimeshiftStreamingMessage> for TimeshiftManager {
         _: &mut Self::Context,
     ) -> Self::Result {
         log::debug!("{}", msg);
-        MessageResult(self.start_streaming(&msg.record, msg.program))
+        let src = self.create_stream_source(&msg.record, msg.program);
+        Box::pin(async move {
+            src?.create_stream().await
+        })
     }
 }
 
@@ -406,30 +412,25 @@ impl TimeshiftRecord {
         }
     }
 
-    fn start_streaming(
+    fn create_stream_source(
         &self,
         program_id: Option<MirakurunProgramId>,
-    ) -> Result<TimeshiftStream, Error> {
-        let point = match program_id {
-            Some(id) => {
-                &self.programs.iter()
-                    .find(|program| id == program.epg.quad.into())
-                    .ok_or(Error::ProgramNotFound)?
-                    .start
-            }
-            None => {
-                self.points.iter()
-                    .next()
-                    .ok_or(Error::RecordNotFound)?
-            }
+    ) -> Result<TimeshiftStreamSource, Error> {
+        if self.points.len() < 2 {
+            return Err(Error::RecordNotFound)
+        }
+        let name = self.name.clone();
+        let file = self.config.file.clone();
+        let point = if let Some(id) = program_id {
+            self.programs.iter()
+                .find(|program| id == program.epg.quad.into())
+                .ok_or(Error::ProgramNotFound)?
+                .start
+                .clone()
+        } else {
+            self.points[0].clone()
         };
-        log::info!("{}: Start streaming from {}@{}", self.name, point.timestamp, point.pos);
-        // TODO
-        // 32 KiB, large enough for 10 ms buffering.
-        //const CHUNK_SIZE: usize = 4096 * 8;
-        //let file = File::open(&self.config.file).await?;
-        //let reader = ChunkStream::new(file, CHUNK_SIZE);
-        Err(Error::ProgramNotFound)
+        Ok(TimeshiftStreamSource { name, file, point })
     }
 
     fn start_recording(&mut self) {
@@ -531,7 +532,7 @@ impl TimeshiftRecord {
         TimeshiftRecordModel {
             name: self.name.clone(),
             start_time,
-            end_time,
+            duration: end_time - start_time,
             recording: self.recording,
         }
     }
@@ -582,4 +583,98 @@ struct TimeshiftProgram {
     epg: EpgProgram,
     start: TimeshiftPoint,
     end: TimeshiftPoint,
+}
+
+struct TimeshiftStreamSource {
+    name: String,
+    file: String,
+    point: TimeshiftPoint,
+}
+
+impl TimeshiftStreamSource {
+    // 32 KiB, large enough for 10 ms buffering.
+    const CHUNK_SIZE: usize = 4096 * 8;
+
+    async fn create_stream(&self) -> Result<TimeshiftStream, Error> {
+        log::info!("{}: Start streaming from {}@{}",
+                   self.name, self.point.timestamp, self.point.pos);
+        let file = TimeshiftFile::open(&self.file).await?;
+        let reader = ChunkStream::new(file, Self::CHUNK_SIZE);
+        Ok(MpegTsStream::new(0, reader))  // TODO: id
+    }
+}
+
+pub struct TimeshiftFile{
+    state: TimeshiftFileState,
+    path: String,
+    file: File,
+}
+
+enum TimeshiftFileState {
+    Read,
+    Seek,
+    Wait,
+}
+
+impl TimeshiftFile {
+    async fn open(path: &str) -> Result<Self, Error> {
+        Ok(TimeshiftFile {
+            state: TimeshiftFileState::Read,
+            path: path.to_string(),
+            file: File::open(path).await?,
+        })
+    }
+}
+
+impl AsyncRead for TimeshiftFile {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut [u8],
+    ) -> Poll<io::Result<usize>> {
+        loop {
+            match self.state {
+                TimeshiftFileState::Read => {
+                    match Pin::new(&mut self.file).poll_read(cx, buf) {
+                        Poll::Ready(Ok(0)) => {
+                            self.state = TimeshiftFileState::Seek;
+                            log::debug!("{}: EOF reached", self.path);
+                        }
+                        poll => {
+                            return poll;
+                        }
+                    }
+                }
+                TimeshiftFileState::Seek => {
+                    match Pin::new(&mut self.file).start_seek(cx, SeekFrom::Start(0)) {
+                        Poll::Ready(Ok(_)) => {
+                            self.state = TimeshiftFileState::Wait;
+                            log::debug!("{}: Seek to the beginning", self.path);
+                        }
+                        Poll::Ready(Err(err)) => {
+                            return Poll::Ready(Err(err));
+                        }
+                        Poll::Pending => {
+                            return Poll::Pending;
+                        }
+                    }
+                }
+                TimeshiftFileState::Wait => {
+                    match Pin::new(&mut self.file).poll_complete(cx) {
+                        Poll::Ready(Ok(pos)) => {
+                            assert!(pos == 0);
+                            self.state = TimeshiftFileState::Read;
+                            log::debug!("{}: The seek completed, restart streaming", self.path);
+                        }
+                        Poll::Ready(Err(err)) => {
+                            return Poll::Ready(Err(err));
+                        }
+                        Poll::Pending => {
+                            return Poll::Pending;
+                        }
+                    }
+                }
+            }
+        }
+    }
 }

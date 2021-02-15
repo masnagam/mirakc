@@ -356,13 +356,13 @@ impl TimeshiftConfig {
         assert!(!self.file.is_empty(),
                 "config.timeshift[].file must be a non-empty path.");
         assert!(self.chunk_size > 0,
-                "config.timeshift[].chunk-size must be a positive integer.");
+                "config.timeshift[].chunk-size must be larger than 0.");
         assert!(self.chunk_size % Self::BUFSIZE == 0,
                 "config.timeshift[].chunk-size must be a multiple of {}.", Self::BUFSIZE);
-        assert!(self.num_chunks > 1,
-                "config.timeshift[].num-chunks must be 2 or more.");
+        assert!(self.num_chunks > 2,
+                "config.timeshift[].num-chunks must be larger than 2.");
         assert!(self.num_gaps > 0,
-                "config.timeshift[].num-gaps must be 1 or more.");
+                "config.timeshift[].num-gaps must be larger than 0.");
         assert!(self.num_chunks > self.num_gaps,
                 "config.timeshift[].num-chunks must be larger than config.timeshift[].num-gaps.");
     }

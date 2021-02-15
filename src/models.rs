@@ -669,7 +669,8 @@ impl From<AudioComponentDescriptor> for MirakurunProgramAudio {
 pub struct TimeshiftRecordModel {
     pub name: String,
     pub start_time: DateTime<Jst>,
-    pub end_time: DateTime<Jst>,
+    #[serde(with = "serde_duration_in_millis")]
+    pub duration: Duration,
     pub recording: bool,
 }
 

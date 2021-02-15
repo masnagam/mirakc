@@ -1280,12 +1280,27 @@ mod tests {
     async fn test_get_timeshift_record() {
         let res = get("/api/timeshift/test").await;
         assert!(res.status() == actix_web::http::StatusCode::OK);
+
+        let res = get("/api/timeshift/not_found").await;
+        assert!(res.status() == actix_web::http::StatusCode::NOT_FOUND);
     }
 
     #[actix_rt::test]
     async fn test_get_timeshift_programs() {
         let res = get("/api/timeshift/test/programs").await;
         assert!(res.status() == actix_web::http::StatusCode::OK);
+    }
+
+    #[actix_rt::test]
+    async fn test_get_timeshift_stream() {
+        // TODO
+
+        //let res = get("/api/timeshift/test/stream").await;
+        //assert!(res.status() == actix_web::http::StatusCode::OK);
+        //assert!(res.headers().contains_key("x-mirakurun-tuner-user-id"));
+
+        //let res = get("/api/timeshift/not_found/stream").await;
+        //assert!(res.status() == actix_web::http::StatusCode::NOT_FOUND);
     }
 
     #[actix_rt::test]
@@ -1577,14 +1592,18 @@ mod tests {
             if let Some(_) = msg.downcast_ref::<QueryTimeshiftRecordsMessage>() {
                 Box::<Option<Result<Vec<TimeshiftRecordModel>, Error>>>::new(
                     Some(Ok(Vec::new())))
-            } else if let Some(_) = msg.downcast_ref::<QueryTimeshiftRecordMessage>() {
-                Box::<Option<Result<_, Error>>>::new(
-                    Some(Ok(TimeshiftRecordModel {
+            } else if let Some(msg) = msg.downcast_ref::<QueryTimeshiftRecordMessage>() {
+                let result = if msg.record == "test" {
+                    Ok(TimeshiftRecordModel {
                         name: "test".to_string(),
                         start_time: Jst::now(),
-                        end_time: Jst::now(),
+                        duration: chrono::Duration::seconds(1),
                         recording: true,
-                    })))
+                    })
+                } else {
+                    Err(Error::RecordNotFound)
+                };
+                Box::<Option<Result<_, Error>>>::new(Some(result))
             } else if let Some(_) = msg.downcast_ref::<QueryTimeshiftProgramsMessage>() {
                 Box::<Option<Result<Vec<EpgProgram>, Error>>>::new(
                     Some(Ok(Vec::new())))
