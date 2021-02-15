@@ -144,12 +144,13 @@ impl TimeshiftManager {
         let template = mustache::compile_str(&config.recorder.record_service_command)?;
         cmds.push(template.render_data_to_string(&data)?);
 
-        let mut stream = tuner_manager.send(StartStreamingMessage {
+        let stream = tuner_manager.send(StartStreamingMessage {
             channel: channel.clone(),
             user,
         }).await??;
 
-        let stop_trigger = stream.take_stop_trigger();
+        let stop_trigger = MpegTsStreamStopTrigger::new(
+            stream.id(), tuner_manager.clone().recipient());
 
         let mut pipeline = spawn_pipeline(cmds, stream.id())?;
 

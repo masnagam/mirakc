@@ -299,7 +299,10 @@ async fn get_channel_stream(
         user: user.clone(),
     }).await??;
 
-    streaming(&config, user, stream, filters, content_type, None).await
+    let stop_triggers = vec![MpegTsStreamStopTrigger::new(
+        stream.id(), tuner_manager.get_ref().clone().recipient())];
+
+    streaming(&config, user, stream, filters, content_type, stop_triggers).await
 }
 
 #[actix_web::get("/channels/{channel_type}/{channel}/services/{sid}/stream")]
@@ -407,8 +410,14 @@ async fn get_program_stream(
         stream.id(), tuner_manager.get_ref().clone(), epg.get_ref().clone()
     ).await?;
 
+    let stop_triggers = vec![
+        MpegTsStreamStopTrigger::new(
+            stream.id(), tuner_manager.get_ref().clone().recipient()),
+        stop_trigger,
+    ];
+
     let result =
-        streaming(&config, user, stream, filters, content_type, stop_trigger).await;
+        streaming(&config, user, stream, filters, content_type, stop_triggers).await;
 
     match result {
         Err(Error::ProgramNotFound) =>
@@ -475,7 +484,7 @@ async fn get_timeshift_stream(
         program: stream_query.program,
     }).await??;
 
-    streaming(&config, user, stream, filters, content_type, None).await
+    streaming(&config, user, stream, filters, content_type, Vec::new()).await
 }
 
 #[actix_web::get("/iptv/playlist")]
@@ -635,24 +644,25 @@ async fn do_get_service_stream(
         user: user.clone(),
     }).await??;
 
-    streaming(&config, user, stream, filters, content_type, None).await
+    let stop_triggers = vec![MpegTsStreamStopTrigger::new(
+        stream.id(), tuner_manager.get_ref().clone().recipient())];
+
+    streaming(&config, user, stream, filters, content_type, stop_triggers).await
 }
 
 async fn streaming(
     config: &Config,
     user: TunerUser,
-    mut stream: MpegTsStream,
+    stream: MpegTsStream,
     filters: Vec<String>,
     content_type: String,
-    stop_trigger: Option<MpegTsStreamStopTrigger>,
+    stop_triggers: Vec<MpegTsStreamStopTrigger>,
 ) -> ApiResult {
     if filters.is_empty() {
         do_streaming(
-            user, stream, content_type, config.server.stream_time_limit).await
+            user, stream, content_type, stop_triggers, config.server.stream_time_limit).await
     } else {
         log::debug!("Streaming with filters: {:?}", filters);
-
-        let stop_trigger2 = stream.take_stop_trigger();
 
         let mut pipeline = spawn_pipeline(filters, stream.id())?;
 
@@ -703,9 +713,7 @@ async fn streaming(
         });
 
         do_streaming(
-            user,
-            MpegTsStreamTerminator::new(receiver, [stop_trigger, stop_trigger2]),
-            content_type, config.server.stream_time_limit).await
+            user, receiver, content_type, stop_triggers, config.server.stream_time_limit).await
     }
 }
 
@@ -713,12 +721,15 @@ async fn do_streaming<S>(
     user: TunerUser,
     stream: S,
     content_type: String,
+    stop_triggers: Vec<MpegTsStreamStopTrigger>,
     time_limit: u64,
 ) -> ApiResult
 where
     // actix_web::dev::HttpResponseBuilder::streaming() requires 'static...
     S: Stream<Item = io::Result<Bytes>> + Unpin + 'static,
 {
+    let stream = MpegTsStreamTerminator::new(stream, stop_triggers);
+
     // No data is sent to the client until the first TS packet comes from the
     // streaming pipeline.
     let mut peekable = stream.peekable();
@@ -1307,11 +1318,13 @@ mod tests {
         let user = user_for_test(0.into());
 
         let result = do_streaming(
-            user.clone(), futures::stream::empty(), "video/MP2T".to_string(), 1000).await;
+            user.clone(), futures::stream::empty(), "video/MP2T".to_string(), Vec::new(),
+            1000).await;
         assert_matches!(result, Err(Error::ProgramNotFound));
 
         let result = do_streaming(
-            user.clone(),  futures::stream::pending(), "video/MP2T".to_string(), 1).await;
+            user.clone(),  futures::stream::pending(), "video/MP2T".to_string(), Vec::new(),
+            1).await;
         assert_matches!(result, Err(Error::StreamingTimedOut));
     }
 
@@ -1450,7 +1463,7 @@ mod tests {
     }
 
     fn tuner_manager_for_test() -> Addr<TunerManagerActor> {
-        TunerManagerActor::mock(Box::new(|msg, ctx| {
+        TunerManagerActor::mock(Box::new(|msg, _ctx| {
             if let Some(_) = msg.downcast_ref::<QueryTunersMessage>() {
                 Box::<Option<Result<Vec<MirakurunTuner>, Error>>>::new(
                     Some(Ok(Vec::new())))
@@ -1458,17 +1471,13 @@ mod tests {
                 if msg.channel.channel == "ch" {
                     let (mut tx, stream) = BroadcasterStream::new_for_test();
                     let _ = tx.try_send(Bytes::from("hi"));
-                    let result = Ok(MpegTsStream::new(
-                        Default::default(), stream, ctx.address().recipient()));
+                    let result = Ok(MpegTsStream::new(Default::default(), stream));
                     Box::<Option<Result<MpegTsStream, Error>>>::new(Some(result))
                 } else {
                     let (_, stream) = BroadcasterStream::new_for_test();
-                    let result = Ok(MpegTsStream::new(
-                        Default::default(), stream, ctx.address().recipient()));
+                    let result = Ok(MpegTsStream::new(Default::default(), stream));
                     Box::<Option<Result<MpegTsStream, Error>>>::new(Some(result))
                 }
-            } else if let Some(_) = msg.downcast_ref::<StopStreamingMessage>() {
-                Box::<Option<()>>::new(Some(()))
             } else {
                 unimplemented!();
             }

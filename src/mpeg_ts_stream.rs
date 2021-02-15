@@ -13,27 +13,18 @@ pub use crate::tuner::TunerSubscriptionId as MpegTsStreamId;
 pub struct MpegTsStream {
     id: MpegTsStreamId,
     stream: BroadcasterStream,
-    stop_trigger: Option<MpegTsStreamStopTrigger>,
 }
 
 impl MpegTsStream {
     pub fn new(
         id: MpegTsStreamId,
         stream: BroadcasterStream,
-        recipient: Recipient<StopStreamingMessage>
     ) -> Self {
-        MpegTsStream {
-            id, stream,
-            stop_trigger: Some(MpegTsStreamStopTrigger::new(id, recipient))
-        }
+        MpegTsStream { id, stream, }
     }
 
     pub fn id(&self) -> MpegTsStreamId {
         self.id
-    }
-
-    pub fn take_stop_trigger(&mut self) -> Option<MpegTsStreamStopTrigger> {
-        self.stop_trigger.take()
     }
 
     pub async fn pipe<W>(self, writer: W)
@@ -61,7 +52,7 @@ pub struct MpegTsStreamStopTrigger {
 }
 
 impl MpegTsStreamStopTrigger {
-    fn new(
+    pub fn new(
         id: MpegTsStreamId,
         recipient: Recipient<StopStreamingMessage>
     ) -> Self {
@@ -173,12 +164,9 @@ mod tests {
 
     #[actix_rt::test]
     async fn test_pipe() {
-        let addr = TestActor.start();
-
         let (mut tx, stream) = BroadcasterStream::new_for_test();
 
-        let stream = MpegTsStream::new(
-            Default::default(), stream, addr.recipient());
+        let stream = MpegTsStream::new(Default::default(), stream);
         let writer = TestWriter::new(b"hello");
         let handle = tokio::spawn(stream.pipe(writer));
 
@@ -187,22 +175,6 @@ mod tests {
 
         drop(tx);
         let _ = handle.await.unwrap();
-    }
-
-    struct TestActor;
-
-    impl Actor for TestActor {
-        type Context = Context<Self>;
-    }
-
-    impl Handler<StopStreamingMessage> for TestActor {
-        type Result = ();
-
-        fn handle(
-            &mut self,
-            _: StopStreamingMessage,
-            _: &mut Self::Context,
-        ) -> Self::Result {}
     }
 
     struct TestWriter {

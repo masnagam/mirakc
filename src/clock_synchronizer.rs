@@ -13,24 +13,32 @@ use serde::Serialize;
 use crate::command_util;
 use crate::epg::*;
 use crate::models::*;
+use crate::mpeg_ts_stream::*;
 use crate::tuner::*;
 
-pub struct ClockSynchronizer {
+pub struct ClockSynchronizer<A: Actor> {
     command: String,
     channels: Vec<EpgChannel>,
-    stream_manager: Recipient<StartStreamingMessage>,
+    stream_manager: Addr<A>,
 }
 
 // TODO: The following implementation has code clones similar to
 //       EitCollector and ServiceScanner.
 
-impl ClockSynchronizer {
+impl<A> ClockSynchronizer<A>
+where
+    A: Actor,
+    A: Handler<StartStreamingMessage>,
+    A: Handler<StopStreamingMessage>,
+    A::Context: actix::dev::ToEnvelope<A, StartStreamingMessage>,
+    A::Context: actix::dev::ToEnvelope<A, StopStreamingMessage>,
+{
     const LABEL: &'static str = "clock-synchronizer";
 
     pub fn new(
         command: String,
         channels: Vec<EpgChannel>,
-        stream_manager: Recipient<StartStreamingMessage>,
+        stream_manager: Addr<A>,
     ) -> Self {
         ClockSynchronizer { command, channels, stream_manager }
     }
@@ -70,7 +78,7 @@ impl ClockSynchronizer {
     async fn sync_clocks_in_channel(
         channel: &EpgChannel,
         command: &str,
-        stream_manager: &Recipient<StartStreamingMessage>,
+        stream_manager: &Addr<A>,
     ) -> Result<Vec<SyncClock>, Error> {
         log::debug!("Synchronizing clocks in {}...", channel.name);
 
@@ -83,6 +91,9 @@ impl ClockSynchronizer {
             channel: channel.clone(),
             user
         }).await??;
+
+        let stop_trigger = MpegTsStreamStopTrigger::new(
+            stream.id(), stream_manager.clone().recipient());
 
         let template = mustache::compile_str(command)?;
         let data = mustache::MapBuilder::new()
@@ -100,6 +111,8 @@ impl ClockSynchronizer {
 
         let mut buf = Vec::new();
         output.read_to_end(&mut buf).await?;
+
+        drop(stop_trigger);
 
         // Explicitly dropping the output of the pipeline is needed.  The output
         // holds the child processes and it kills them when dropped.
@@ -140,14 +153,12 @@ mod tests {
 
     #[actix_rt::test]
     async fn test_sync_clocks_in_channel() {
-        let mock = Mock::mock(Box::new(|msg, ctx| {
+        let mock = Mock::mock(Box::new(|msg, _ctx| {
             if let Some(_) = msg.downcast_ref::<StartStreamingMessage>() {
                 let (_, stream) = BroadcasterStream::new_for_test();
                 let result: Result<_, Error> = Ok(MpegTsStream::new(
-                    Default::default(), stream, ctx.address().recipient()));
+                    Default::default(), stream));
                 Box::new(Some(result))
-            } else if let Some(_) = msg.downcast_ref::<StopStreamingMessage>() {
-                Box::new(Some(()))
             } else {
                 unimplemented!();
             }
@@ -171,8 +182,7 @@ mod tests {
 
         let cmd = format!(
             "echo '{}'", serde_json::to_string(&expected).unwrap());
-        let sync = ClockSynchronizer::new(
-            cmd, channels.clone(), mock.clone().recipient());
+        let sync = ClockSynchronizer::new(cmd, channels.clone(), mock.clone());
         let results = sync.sync_clocks().await;
         assert_eq!(results.len(), 1);
         assert_matches!(&results[0], (_, Some(v)) => {
@@ -188,8 +198,7 @@ mod tests {
 
         // Emulate out of services by using `false`
         let cmd = "false".to_string();
-        let sync = ClockSynchronizer::new(
-            cmd, channels.clone(), mock.clone().recipient());
+        let sync = ClockSynchronizer::new(cmd, channels.clone(), mock.clone());
         let results = sync.sync_clocks().await;
         assert_eq!(results.len(), 1);
         assert_matches!(&results[0], (_, None));

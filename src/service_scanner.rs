@@ -12,24 +12,32 @@ use serde::Serialize;
 use crate::command_util;
 use crate::epg::*;
 use crate::models::*;
+use crate::mpeg_ts_stream::*;
 use crate::tuner::*;
 
-pub struct ServiceScanner {
+pub struct ServiceScanner<A: Actor> {
     command: String,
     channels: Vec<EpgChannel>,
-    stream_manager: Recipient<StartStreamingMessage>,
+    stream_manager: Addr<A>,
 }
 
 // TODO: The following implementation has code clones similar to
 //       ClockSynchronizer and EitCollector.
 
-impl ServiceScanner {
+impl<A> ServiceScanner<A>
+where
+    A: Actor,
+    A: Handler<StartStreamingMessage>,
+    A: Handler<StopStreamingMessage>,
+    A::Context: actix::dev::ToEnvelope<A, StartStreamingMessage>,
+    A::Context: actix::dev::ToEnvelope<A, StopStreamingMessage>,
+{
     const LABEL: &'static str = "service-scanner";
 
     pub fn new(
         command: String,
         channels: Vec<EpgChannel>,
-        stream_manager: Recipient<StartStreamingMessage>,
+        stream_manager: Addr<A>,
     ) -> Self {
         ServiceScanner { command, channels, stream_manager }
     }
@@ -67,7 +75,7 @@ impl ServiceScanner {
     async fn scan_services_in_channel(
         channel: &EpgChannel,
         command: &str,
-        stream_manager: &Recipient<StartStreamingMessage>,
+        stream_manager: &Addr<A>,
     ) -> Result<Vec<EpgService>, Error> {
         log::debug!("Scanning services in {}...", channel.name);
 
@@ -80,6 +88,9 @@ impl ServiceScanner {
             channel: channel.clone(),
             user
         }).await??;
+
+        let stop_trigger = MpegTsStreamStopTrigger::new(
+            stream.id(), stream_manager.clone().recipient());
 
         let template = mustache::compile_str(command)?;
         let data = mustache::MapBuilder::new()
@@ -97,6 +108,8 @@ impl ServiceScanner {
 
         let mut buf = Vec::new();
         output.read_to_end(&mut buf).await?;
+
+        drop(stop_trigger);
 
         // Explicitly dropping the output of the pipeline is needed.  The output
         // holds the child processes and it kills them when dropped.
@@ -154,20 +167,17 @@ mod tests {
     use super::*;
     use crate::broadcaster::BroadcasterStream;
     use crate::error::Error;
-    use crate::mpeg_ts_stream::MpegTsStream;
 
     type Mock = actix::actors::mocker::Mocker<TunerManager>;
 
     #[actix_rt::test]
     async fn test_sync_clocks_in_channel() {
-        let mock = Mock::mock(Box::new(|msg, ctx| {
+        let mock = Mock::mock(Box::new(|msg, _ctx| {
             if let Some(_) = msg.downcast_ref::<StartStreamingMessage>() {
                 let (_, stream) = BroadcasterStream::new_for_test();
                 let result: Result<_, Error> = Ok(MpegTsStream::new(
-                    Default::default(), stream, ctx.address().recipient()));
+                    Default::default(), stream));
                 Box::new(Some(result))
-            } else if let Some(_) = msg.downcast_ref::<StopStreamingMessage>() {
-                Box::new(Some(()))
             } else {
                 unimplemented!();
             }
@@ -194,16 +204,14 @@ mod tests {
 
         let cmd = format!(
             "echo '{}'", serde_json::to_string(&expected).unwrap());
-        let scan = ServiceScanner::new(
-            cmd, channels.clone(), mock.clone().recipient());
+        let scan = ServiceScanner::new(cmd, channels.clone(), mock.clone());
         let results = scan.scan_services().await;
         assert!(results[0].1.is_some());
         assert_eq!(results[0].1.as_ref().unwrap().len(), 1);
 
         // Emulate out of services by using `false`
         let cmd = "false".to_string();
-        let scan = ServiceScanner::new(
-            cmd, channels.clone(), mock.clone().recipient());
+        let scan = ServiceScanner::new(cmd, channels.clone(), mock.clone());
         let results = scan.scan_services().await;
         assert!(results[0].1.is_none());
     }

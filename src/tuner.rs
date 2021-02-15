@@ -270,7 +270,7 @@ impl Handler<StartStreamingMessage> for TunerManager {
             subscription.broadcaster.send(SubscribeMessage {
                 id: subscription.id
             }))
-            .map(move |result, act, ctx| {
+            .map(move |result, act, _ctx| {
                 if result.is_ok() {
                     log::info!("{}: Started streaming", subscription.id);
                 } else {
@@ -279,10 +279,7 @@ impl Handler<StartStreamingMessage> for TunerManager {
                     act.deactivate_tuner(subscription.id);
                 }
                 result
-                    .map(|stream| {
-                        MpegTsStream::new(
-                            subscription.id, stream, ctx.address().recipient())
-                    })
+                    .map(|stream| MpegTsStream::new(subscription.id, stream))
                     .map_err(Error::from)
             });
 

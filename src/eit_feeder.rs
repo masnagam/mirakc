@@ -15,6 +15,7 @@ use crate::datetime_ext::*;
 use crate::error::Error;
 use crate::epg::*;
 use crate::models::*;
+use crate::mpeg_ts_stream::*;
 use crate::tuner::*;
 use crate::command_util;
 
@@ -166,6 +167,9 @@ impl EitCollector {
             user
         }).await??;
 
+        let stop_trigger = MpegTsStreamStopTrigger::new(
+            stream.id(), tuner_manager.clone().recipient());
+
         let template = mustache::compile_str(command)?;
         let data = mustache::MapBuilder::new()
             .insert("sids", &channel.services)?
@@ -199,6 +203,8 @@ impl EitCollector {
         if !sections.is_empty() {
             epg.do_send(UpdateSchedulesMessage { sections });
         }
+
+        drop(stop_trigger);
 
         // Explicitly dropping the output of the pipeline is needed.  The output
         // holds the child processes and it kills them when dropped.

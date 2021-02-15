@@ -14,30 +14,32 @@ use crate::models::*;
 use crate::mpeg_ts_stream::*;
 use crate::tuner::*;
 
-#[cfg(not(test))]
-type TunerManagerActor = TunerManager;
-#[cfg(test)]
-type TunerManagerActor = actix::actors::mocker::Mocker<TunerManager>;
-
-#[cfg(not(test))]
-type EpgActor = Epg;
-#[cfg(test)]
-type EpgActor = actix::actors::mocker::Mocker<Epg>;
-
-pub async fn track_airtime(
+pub async fn track_airtime<T, E>(
     command: &str,
     channel: &EpgChannel,
     program: &EpgProgram,
     stream_id: MpegTsStreamId,
-    tuner_manager: Addr<TunerManagerActor>,
-    epg: Addr<EpgActor>,
-) -> Result<Option<MpegTsStreamStopTrigger>, Error> {
+    tuner_manager: Addr<T>,
+    epg: Addr<E>,
+) -> Result<MpegTsStreamStopTrigger, Error>
+where
+    T: Actor,
+    T: Handler<StartStreamingMessage>,
+    T::Context: actix::dev::ToEnvelope<T, StartStreamingMessage>,
+    T: Handler<StopStreamingMessage>,
+    T::Context: actix::dev::ToEnvelope<T, StopStreamingMessage>,
+    E: Actor,
+    E: Handler<UpdateAirtimeMessage>,
+    E::Context: actix::dev::ToEnvelope<E, UpdateAirtimeMessage>,
+    E: Handler<RemoveAirtimeMessage>,
+    E::Context: actix::dev::ToEnvelope<E, RemoveAirtimeMessage>,
+{
     let user = TunerUser {
         info: TunerUserInfo::Tracker { stream_id },
         priority: (-1).into(),
     };
 
-    let mut stream = tuner_manager.send(StartStreamingMessage {
+    let  stream = tuner_manager.send(StartStreamingMessage {
         channel: channel.clone(),
         user
     }).await??;
@@ -54,7 +56,8 @@ pub async fn track_airtime(
 
     let (input, output) = pipeline.take_endpoints().unwrap();
 
-    let stop_trigger = stream.take_stop_trigger();
+    let stop_trigger = MpegTsStreamStopTrigger::new(
+        stream.id(), tuner_manager.clone().recipient());
 
     actix::spawn(async {
         let _ = stream.pipe(input).await;
@@ -70,11 +73,19 @@ pub async fn track_airtime(
     Ok(stop_trigger)
 }
 
-async fn update_airtime<R: AsyncRead + Unpin>(
+async fn update_airtime<R, E>(
     quad: EventQuad,
     output: R,
-    epg: Addr<EpgActor>,
-) -> Result<(), Error> {
+    epg: Addr<E>,
+) -> Result<(), Error>
+where
+    R: AsyncRead + Unpin,
+    E: Actor,
+    E: Handler<UpdateAirtimeMessage>,
+    E::Context: actix::dev::ToEnvelope<E, UpdateAirtimeMessage>,
+    E: Handler<RemoveAirtimeMessage>,
+    E::Context: actix::dev::ToEnvelope<E, RemoveAirtimeMessage>,
+{
     log::info!("Tracking airtime of {}...", quad);
 
     let mut reader = BufReader::new(output);

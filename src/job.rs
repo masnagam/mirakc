@@ -136,7 +136,7 @@ impl JobManager {
         let scanner = ServiceScanner::new(
             self.config.jobs.scan_services.command.clone(),
             self.collect_enabled_channels(),
-            self.tuner_manager.clone().recipient());
+            self.tuner_manager.clone());
 
         let job = JobKind::ScanServices.create(self.semaphore.clone())
             .perform(scanner.scan_services());
@@ -178,7 +178,7 @@ impl JobManager {
         let sync = ClockSynchronizer::new(
             self.config.jobs.sync_clocks.command.clone(),
             self.collect_enabled_channels(),
-            self.tuner_manager.clone().recipient());
+            self.tuner_manager.clone());
 
         let job = JobKind::SyncClocks.create(self.semaphore.clone())
             .perform(sync.sync_clocks());
