@@ -68,24 +68,24 @@ impl TimeshiftManager {
         self.records.get_mut(name).unwrap().update_chunk(point);
     }
 
-    fn start_program(
+    fn start_event(
         &mut self,
         name: &str,
         quad: EventQuad,
         event: EitEvent,
         point: TimeshiftPoint,
     ) {
-        self.records.get_mut(name).unwrap().start_program(quad, event, point);
+        self.records.get_mut(name).unwrap().start_event(quad, event, point);
     }
 
-    fn end_program(
+    fn end_event(
         &mut self,
         name: &str,
         quad: EventQuad,
         event: EitEvent,
         point: TimeshiftPoint,
     ) {
-        self.records.get_mut(name).unwrap().end_program(quad, event, point);
+        self.records.get_mut(name).unwrap().end_event(quad, event, point);
     }
 
     async fn activate_recorders(
@@ -166,6 +166,7 @@ impl TimeshiftManager {
         actix::spawn(async move {
             let _ = stream.pipe(input).await;
             drop(pipeline);
+            // TODO: respawn the recorder if it stopped due to an error.
         });
 
         actix::spawn(async move {
@@ -320,7 +321,11 @@ pub struct StartTimeshiftStreamingMessage {
 
 impl fmt::Display for StartTimeshiftStreamingMessage {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "StartTimeshiftStreaming for {}", self.record)
+        if let Some(id) = self.program {
+            write!(f, "StartTimeshiftStreaming for {} from program#{}", self.record, id)
+        } else {
+            write!(f, "StartTimeshiftStreaming for {}", self.record)
+        }
     }
 }
 
@@ -349,8 +354,8 @@ enum TimeshiftMessage {
     Start(TimeshiftStartMessage),
     Stop(TimeshiftStopMessage),
     ChunkTimestamp(TimeshiftChunkTimestampMessage),
-    StartProgram(TimeshiftProgramMessage),
-    EndProgram(TimeshiftProgramMessage),
+    StartEvent(TimeshiftEventMessage),
+    EndEvent(TimeshiftEventMessage),
 }
 
 impl Handler<TimeshiftMessage> for TimeshiftManager {
@@ -363,21 +368,21 @@ impl Handler<TimeshiftMessage> for TimeshiftManager {
             TimeshiftMessage::ChunkTimestamp(msg) => {
                 self.update_chunk_timestamp(&msg.id, msg.chunk);
             }
-            TimeshiftMessage::StartProgram(msg) => {
+            TimeshiftMessage::StartEvent(msg) => {
                 let quad = EventQuad::new(
                     msg.original_network_id,
                     msg.transport_stream_id,
                     msg.service_id,
                     msg.event.event_id);
-                self.start_program(&msg.id, quad, msg.event, msg.record);
+                self.start_event(&msg.id, quad, msg.event, msg.record);
             }
-            TimeshiftMessage::EndProgram(msg) => {
+            TimeshiftMessage::EndEvent(msg) => {
                 let quad = EventQuad::new(
                     msg.original_network_id,
                     msg.transport_stream_id,
                     msg.service_id,
                     msg.event.event_id);
-                self.end_program(&msg.id, quad, msg.event, msg.record);
+                self.end_event(&msg.id, quad, msg.event, msg.record);
             }
         }
         MessageResult(())
@@ -483,7 +488,7 @@ impl TimeshiftRecord {
         }
     }
 
-    fn start_program(
+    fn start_event(
         &mut self,
         quad: EventQuad,
         event: EitEvent,
@@ -499,7 +504,7 @@ impl TimeshiftRecord {
         });
     }
 
-    fn end_program(
+    fn end_event(
         &mut self,
         quad: EventQuad,
         event: EitEvent,
@@ -560,7 +565,7 @@ struct TimeshiftChunkTimestampMessage {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct TimeshiftProgramMessage {
+struct TimeshiftEventMessage {
     id: String,
     original_network_id: NetworkId,
     transport_stream_id: TransportStreamId,
@@ -598,7 +603,8 @@ impl TimeshiftStreamSource {
     async fn create_stream(&self) -> Result<TimeshiftStream, Error> {
         log::info!("{}: Start streaming from {}@{}",
                    self.name, self.point.timestamp, self.point.pos);
-        let file = TimeshiftFile::open(&self.file).await?;
+        let mut file = TimeshiftFile::open(&self.file).await?;
+        file.set_position(self.point.pos).await?;
         let reader = ChunkStream::new(file, Self::CHUNK_SIZE);
         Ok(MpegTsStream::new(0, reader))  // TODO: id
     }
@@ -623,6 +629,11 @@ impl TimeshiftFile {
             path: path.to_string(),
             file: File::open(path).await?,
         })
+    }
+
+    async fn set_position(&mut self, pos: usize) -> Result<(), Error> {
+        let _ = self.file.seek(SeekFrom::Start(pos as u64)).await;
+        Ok(())
     }
 }
 

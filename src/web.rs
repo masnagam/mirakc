@@ -794,6 +794,7 @@ struct TimeshiftRecordPath {
 
 #[derive(Deserialize)]
 struct TimeshiftStreamQuery {
+    #[serde(default)]
     program: Option<MirakurunProgramId>,
 }
 
