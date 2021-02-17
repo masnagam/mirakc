@@ -171,13 +171,15 @@ mod tests {
     type Mock = actix::actors::mocker::Mocker<TunerManager>;
 
     #[actix_rt::test]
-    async fn test_sync_clocks_in_channel() {
+    async fn test_scan_services_in_channel() {
         let mock = Mock::mock(Box::new(|msg, _ctx| {
             if let Some(_) = msg.downcast_ref::<StartStreamingMessage>() {
                 let (_, stream) = BroadcasterStream::new_for_test();
                 let result: Result<_, Error> =
                     Ok(MpegTsStream::new(TunerSubscriptionId::default(), stream));
                 Box::new(Some(result))
+            } else if let Some(_) = msg.downcast_ref::<StopStreamingMessage>() {
+                Box::new(Some(()))
             } else {
                 unimplemented!();
             }

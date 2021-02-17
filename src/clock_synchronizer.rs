@@ -158,6 +158,8 @@ mod tests {
                 let result: Result<_, Error> =
                     Ok(MpegTsStream::new(TunerSubscriptionId::default(), stream));
                 Box::new(Some(result))
+            } else if let Some(_) = msg.downcast_ref::<StopStreamingMessage>() {
+                Box::new(Some(()))
             } else {
                 unimplemented!();
             }
