@@ -14,7 +14,7 @@ CLEAN=no
 
 help() {
   cat <<EOF >&2
-Print OpenAPI/Swagger JSON obtained from Mirakurun.
+Update Dockerfile for VSCode Remote Container.
 
 USAGE:
   $PROGNAME [options]
@@ -70,3 +70,11 @@ echo "Updating sourcemap variables in $PROJDIR/.devcontainer/Dockerfile..." >&2
 sed -e "s|^ENV MIRAKC_DEV_RUSTC_COMMIT_HASH=.*|ENV MIRAKC_DEV_RUSTC_COMMIT_HASH=\"$COMMIT_HASH\"|" \
     -e "s|^ENV MIRAKC_DEV_RUST_TOOLCHAIN_PATH=.*|ENV MIRAKC_DEV_RUST_TOOLCHAIN_PATH=\"$TOOLCHAIN_PATH\"|" \
     $PROJDIR/.devcontainer/Dockerfile | sponge $PROJDIR/.devcontainer/Dockerfile
+
+cat <<EOF
+Done.
+--------------------------------------------------------------------------------
+COMMIT_HASH   : $COMMIT_HASH
+TOOLCHAIN_PATH: $TOOLCHAIN_PATH
+--------------------------------------------------------------------------------
+EOF
