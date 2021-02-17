@@ -64,28 +64,38 @@ impl TimeshiftManager {
         self.records.get_mut(name).unwrap().stop_recording(reset);
     }
 
-    fn update_chunk_timestamp(&mut self, name: &str, point: TimeshiftPoint) {
-        self.records.get_mut(name).unwrap().update_chunk(point);
+    fn handle_chunk_timestamp(&mut self, name: &str, point: TimeshiftPoint) {
+        self.records.get_mut(name).unwrap().handle_chunk_timestamp(point);
     }
 
-    fn start_event(
+    fn handle_event_start(
         &mut self,
         name: &str,
         quad: EventQuad,
         event: EitEvent,
         point: TimeshiftPoint,
     ) {
-        self.records.get_mut(name).unwrap().start_event(quad, event, point);
+        self.records.get_mut(name).unwrap().handle_event_start(quad, event, point);
     }
 
-    fn end_event(
+    fn handle_event_update(
         &mut self,
         name: &str,
         quad: EventQuad,
         event: EitEvent,
         point: TimeshiftPoint,
     ) {
-        self.records.get_mut(name).unwrap().end_event(quad, event, point);
+        self.records.get_mut(name).unwrap().handle_event_update(quad, event, point);
+    }
+
+    fn handle_event_end(
+        &mut self,
+        name: &str,
+        quad: EventQuad,
+        event: EitEvent,
+        point: TimeshiftPoint,
+    ) {
+        self.records.get_mut(name).unwrap().handle_event_end(quad, event, point);
     }
 
     async fn activate_recorders(
@@ -354,8 +364,9 @@ enum TimeshiftMessage {
     Start(TimeshiftStartMessage),
     Stop(TimeshiftStopMessage),
     ChunkTimestamp(TimeshiftChunkTimestampMessage),
-    StartEvent(TimeshiftEventMessage),
-    EndEvent(TimeshiftEventMessage),
+    EventStart(TimeshiftEventMessage),
+    EventUpdate(TimeshiftEventMessage),
+    EventEnd(TimeshiftEventMessage),
 }
 
 impl Handler<TimeshiftMessage> for TimeshiftManager {
@@ -366,23 +377,31 @@ impl Handler<TimeshiftMessage> for TimeshiftManager {
             TimeshiftMessage::Start(msg) => self.start_recording(&msg.id),
             TimeshiftMessage::Stop(msg) => self.stop_recording(&msg.id, msg.reset),
             TimeshiftMessage::ChunkTimestamp(msg) => {
-                self.update_chunk_timestamp(&msg.id, msg.chunk);
+                self.handle_chunk_timestamp(&msg.id, msg.chunk);
             }
-            TimeshiftMessage::StartEvent(msg) => {
+            TimeshiftMessage::EventStart(msg) => {
                 let quad = EventQuad::new(
                     msg.original_network_id,
                     msg.transport_stream_id,
                     msg.service_id,
                     msg.event.event_id);
-                self.start_event(&msg.id, quad, msg.event, msg.record);
+                self.handle_event_start(&msg.id, quad, msg.event, msg.record);
             }
-            TimeshiftMessage::EndEvent(msg) => {
+            TimeshiftMessage::EventUpdate(msg) => {
                 let quad = EventQuad::new(
                     msg.original_network_id,
                     msg.transport_stream_id,
                     msg.service_id,
                     msg.event.event_id);
-                self.end_event(&msg.id, quad, msg.event, msg.record);
+                self.handle_event_update(&msg.id, quad, msg.event, msg.record);
+            }
+            TimeshiftMessage::EventEnd(msg) => {
+                let quad = EventQuad::new(
+                    msg.original_network_id,
+                    msg.transport_stream_id,
+                    msg.service_id,
+                    msg.event.event_id);
+                self.handle_event_end(&msg.id, quad, msg.event, msg.record);
             }
         }
         MessageResult(())
@@ -451,13 +470,9 @@ impl TimeshiftRecord {
         }
     }
 
-    fn update_chunk(&mut self, point: TimeshiftPoint) {
+    fn handle_chunk_timestamp(&mut self, point: TimeshiftPoint) {
         self.maintain();
-        let index = point.pos / self.config.chunk_size;
-        assert!(point.pos % self.config.chunk_size == 0);
-        log::info!("{}: Chunk#{}.timestamp: {}", self.name, index, point.timestamp);
-        self.points.push(point);
-        assert!(self.points.len() <= self.config.max_chunks());
+        self.append_point(point);
     }
 
     fn maintain(&mut self) {
@@ -465,30 +480,37 @@ impl TimeshiftRecord {
             return;
         }
         self.invalidate_first_chunk();
-        self.expire_programs();
+        self.purge_expired_programs();
     }
 
     fn invalidate_first_chunk(&mut self) {
         assert!(self.points.len() == self.config.max_chunks());
         let point = self.points.remove(0);
         let index = point.pos / self.config.chunk_size;
-        log::debug!("{}: Invalidated Chunk#{}", self.name, index);
+        log::debug!("{}: Chunk#{}: Invalidated", self.name, index);
     }
 
-    fn expire_programs(&mut self) {
+    fn purge_expired_programs(&mut self) {
         assert!(!self.points.is_empty());
         let timestamp = self.points[0].timestamp;  // timestamp of the first chunk
-        let index = self.programs.iter()
-            .position(|program| program.end.timestamp > timestamp);
-        if let Some(n) = index {
-            for program in self.programs.drain(0..n) {  // remove first n programs
-                log::info!("{}: Program#{} ({}) expired",
-                           self.name, program.epg.quad, program.epg.name());
-            }
+        let n = self.programs.iter()
+            .position(|program| program.end.timestamp > timestamp)
+            .unwrap_or(self.programs.len());
+        for program in self.programs.drain(0..n) {  // remove first n programs
+            log::info!("{}: Program#{}: Purged: {}",
+                       self.name, program.epg.quad, program.epg.name());
         }
     }
 
-    fn start_event(
+    fn append_point(&mut self, point: TimeshiftPoint) {
+        let index = point.pos / self.config.chunk_size;
+        assert!(point.pos % self.config.chunk_size == 0);
+        log::info!("{}: Chunk#{}: Timestamp: {}", self.name, index, point.timestamp);
+        self.points.push(point);
+        assert!(self.points.len() <= self.config.max_chunks());
+    }
+
+    fn handle_event_start(
         &mut self,
         quad: EventQuad,
         event: EitEvent,
@@ -496,7 +518,7 @@ impl TimeshiftRecord {
     ) {
         let mut epg = EpgProgram::new(quad);
         epg.update(&event);
-        log::info!("{}: Program#{} ({}) started", self.name, quad, epg.name());
+        log::info!("{}: Program#{}: Started: {}: {}", self.name, quad, point, epg.name());
         self.programs.push(TimeshiftProgram {
             epg,
             start: point.clone(),
@@ -504,7 +526,7 @@ impl TimeshiftRecord {
         });
     }
 
-    fn end_event(
+    fn handle_event_update(
         &mut self,
         quad: EventQuad,
         event: EitEvent,
@@ -512,10 +534,30 @@ impl TimeshiftRecord {
     ) {
         let mut epg = EpgProgram::new(quad);
         epg.update(&event);
-        log::info!("{}: Program#{} ({}) ended", self.name, quad, epg.name());
+        log::info!("{}: Program#{}: Updated: {}: {}", self.name, quad, point, epg.name());
+        self.update_last_program(epg, point);
+    }
+
+    fn handle_event_end(
+        &mut self,
+        quad: EventQuad,
+        event: EitEvent,
+        point: TimeshiftPoint,
+    ) {
+        let mut epg = EpgProgram::new(quad);
+        epg.update(&event);
+        log::info!("{}: Program#{}: Ended: {}: {}", self.name, quad, point, epg.name());
+        self.update_last_program(epg, point);
+    }
+
+    fn update_last_program(
+        &mut self,
+        epg: EpgProgram,
+        point: TimeshiftPoint,
+    ) {
         let last = self.programs.iter_mut()
             .last()
-            .filter(|program| program.epg.quad == quad);
+            .filter(|program| program.epg.quad == epg.quad);
         if let Some(mut program) = last {
             program.epg = epg;
             program.end = point;
@@ -581,6 +623,12 @@ struct TimeshiftPoint {
     #[serde(with = "serde_jst")]
     timestamp: DateTime<Jst>,
     pos: usize,
+}
+
+impl fmt::Display for TimeshiftPoint {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}@{}", self.timestamp, self.pos)
+    }
 }
 
 #[derive(Clone)]
@@ -686,6 +734,115 @@ impl AsyncRead for TimeshiftFile {
                     }
                 }
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::TimeZone;
+    use crate::datetime_ext::Jst;
+
+    #[test]
+    fn test_timeshift_record_purge_expired_programs() {
+        let mut record = TimeshiftRecord {
+            name: "record".to_string(),
+            config: create_config(),
+            channel: create_epg_channel(),
+            programs: vec![
+                TimeshiftProgram {
+                    epg: EpgProgram::new((0, 0, 0, 1).into()),
+                    start: TimeshiftPoint {
+                        timestamp: Jst.ymd(2021, 1, 1).and_hms(0, 0, 0),
+                        pos: 0,
+                    },
+                    end: TimeshiftPoint {
+                        timestamp: Jst.ymd(2021, 1, 1).and_hms(0, 0, 0),
+                        pos: 0,
+                    },
+                },
+            ],
+            points: vec![
+                TimeshiftPoint {
+                    timestamp: Jst.ymd(2021, 1, 1).and_hms(0, 1, 0),
+                    pos: 0,
+                },
+            ],
+            recording: true,
+        };
+        record.purge_expired_programs();
+        assert!(record.programs.is_empty());
+
+        let mut record = TimeshiftRecord {
+            name: "record".to_string(),
+            config: create_config(),
+            channel: create_epg_channel(),
+            programs: vec![
+                TimeshiftProgram {
+                    epg: EpgProgram::new((0, 0, 0, 1).into()),
+                    start: TimeshiftPoint {
+                        timestamp: Jst.ymd(2021, 1, 1).and_hms(0, 0, 0),
+                        pos: 0,
+                    },
+                    end: TimeshiftPoint {
+                        timestamp: Jst.ymd(2021, 1, 1).and_hms(0, 0, 0),
+                        pos: 0,
+                    },
+                },
+                TimeshiftProgram {
+                    epg: EpgProgram::new((0, 0, 0, 2).into()),
+                    start: TimeshiftPoint {
+                        timestamp: Jst.ymd(2021, 1, 1).and_hms(0, 0, 0),
+                        pos: 0,
+                    },
+                    end: TimeshiftPoint {
+                        timestamp: Jst.ymd(2021, 1, 1).and_hms(0, 1, 0),
+                        pos: 0,
+                    },
+                },
+                TimeshiftProgram {
+                    epg: EpgProgram::new((0, 0, 0, 3).into()),
+                    start: TimeshiftPoint {
+                        timestamp: Jst.ymd(2021, 1, 1).and_hms(0, 0, 0),
+                        pos: 0,
+                    },
+                    end: TimeshiftPoint {
+                        timestamp: Jst.ymd(2021, 1, 1).and_hms(0, 2, 0),
+                        pos: 0,
+                    },
+                },
+            ],
+            points: vec![
+                TimeshiftPoint {
+                    timestamp: Jst.ymd(2021, 1, 1).and_hms(0, 1, 0),
+                    pos: 0,
+                },
+            ],
+            recording: true,
+        };
+        record.purge_expired_programs();
+        assert_eq!(record.programs.len(), 1);
+        assert_eq!(record.programs[0].epg.quad, (0, 0, 0, 3).into());
+    }
+
+    fn create_config() -> TimeshiftConfig {
+        serde_yaml::from_str::<TimeshiftConfig>(r#"
+          channel: ch
+          sid: 1
+          file: /path/to/file
+          num-chunks: 5
+        "#).unwrap()
+    }
+
+    fn create_epg_channel() -> EpgChannel {
+        EpgChannel {
+            name: "ch".to_string(),
+            channel_type: ChannelType::GR,
+            channel: "ch".to_string(),
+            extra_args: "".to_string(),
+            services: vec![],
+            excluded_services: vec![],
         }
     }
 }

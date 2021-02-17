@@ -363,8 +363,9 @@ impl TimeshiftConfig {
                 "config.timeshift[].num-chunks must be larger than 2.");
         assert!(self.num_gaps > 0,
                 "config.timeshift[].num-gaps must be larger than 0.");
-        assert!(self.num_chunks > self.num_gaps,
-                "config.timeshift[].num-chunks must be larger than config.timeshift[].num-gaps.");
+        assert!(self.num_chunks - self.num_gaps > 1,
+                "Maximum number of available chunks (num-chunks - num-gaps) \
+                 must be larger than 1.");
     }
 
     fn default_chunk_size() -> usize {
