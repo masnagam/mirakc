@@ -486,7 +486,7 @@ impl TimeshiftRecord {
     fn invalidate_first_chunk(&mut self) {
         assert!(self.points.len() == self.config.max_chunks());
         let point = self.points.remove(0);
-        let index = point.pos / self.config.chunk_size;
+        let index = point.pos / (self.config.chunk_size as u64);
         log::debug!("{}: Chunk#{}: Invalidated", self.name, index);
     }
 
@@ -503,8 +503,8 @@ impl TimeshiftRecord {
     }
 
     fn append_point(&mut self, point: TimeshiftPoint) {
-        let index = point.pos / self.config.chunk_size;
-        assert!(point.pos % self.config.chunk_size == 0);
+        let index = point.pos / (self.config.chunk_size as u64);
+        assert!(point.pos % (self.config.chunk_size as u64) == 0);
         log::info!("{}: Chunk#{}: Timestamp: {}", self.name, index, point.timestamp);
         self.points.push(point);
         assert!(self.points.len() <= self.config.max_chunks());
@@ -622,7 +622,7 @@ struct TimeshiftEventMessage {
 struct TimeshiftPoint {
     #[serde(with = "serde_jst")]
     timestamp: DateTime<Jst>,
-    pos: usize,
+    pos: u64,
 }
 
 impl fmt::Display for TimeshiftPoint {
@@ -679,8 +679,8 @@ impl TimeshiftFile {
         })
     }
 
-    async fn set_position(&mut self, pos: usize) -> Result<(), Error> {
-        let _ = self.file.seek(SeekFrom::Start(pos as u64)).await;
+    async fn set_position(&mut self, pos: u64) -> Result<(), Error> {
+        let _ = self.file.seek(SeekFrom::Start(pos)).await;
         Ok(())
     }
 }
