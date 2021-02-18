@@ -20,6 +20,10 @@ Web API endpoints listed below have been implemented at this moment:
 | [/api/docs]                                     | :heavy_check_mark:         |
 | [/api/iptv/playlist]                            |                            |
 | [/api/iptv/epg]                                 |                            |
+| [/api/timeshift]                                |                            |
+| [/api/timeshift/{record}]                       |                            |
+| [/api/timeshift/{record}/programs]              |                            |
+| [/api/timeshift/{record}/stream]                |                            |
 
 The endpoints above are enough to run [EPGStation].
 
@@ -38,6 +42,10 @@ See [issues/4](https://github.com/mirakc/mirakc/issues/4) for details
 Web API endpoints listed below have been implemented as the mirakc extensions:
 
 * [/api/iptv/playlist]
+* [/api/timeshift]
+* [/api/timeshift/{record}]
+* [/api/timeshift/{record}/programs]
+* [/api/timeshift/{record}/stream]
 
 [/api/version]: #apiversion
 [/api/status]: #apistatus
@@ -54,6 +62,10 @@ Web API endpoints listed below have been implemented as the mirakc extensions:
 [/api/docs]: #apidocs
 [/api/iptv/playlist]: #apiiptvplaylist
 [/api/iptv/epg]: #apiiptvepg
+[/api/timeshift]: #apitimeshift
+[/api/timeshift/{record}]: #apitimeshiftrecord
+[/api/timeshift/{record}/programs]: #apitimeshiftrecordprograms
+[/api/timeshift/{record}/stream]: #apitimeshiftrecordstream
 
 ## Incompatibility of the `X-Mirakurun-Priority` header
 
@@ -187,3 +199,31 @@ The following query parameters can be specified:
 
 [EPGStation]: https://github.com/l3tnun/EPGStation
 [BonDriver_mirakc]: https://github.com/epgdatacapbon/BonDriver_mirakc
+
+## Web API endpoints for timeshift playback
+
+### /api/timeshift
+
+Returns a list of timeshift records.
+
+### /api/timeshift/{record}
+
+Returns a timeshift record.
+
+### /api/timeshift/{record}/programs
+
+Returns a list of programs in a timeshift record.
+
+### /api/timeshift/{record}/stream
+
+Starts streaming for a timeshift record.
+
+The following command starts streaming from a program specified by Mirakurun
+program ID (327370103203256):
+
+```
+curl -sG http://mirakc:40772/api/timeshift/etv/stream?program=327370103203256
+```
+
+You can specify pre-filters and post-filters like any other endpoint for
+streaming, but you don't need to specify the decode filter unlike others.
