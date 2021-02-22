@@ -186,6 +186,7 @@ fn create_api_service() -> impl actix_web::dev::HttpServiceFactory {
         .service(get_timeshift_record)
         .service(get_timeshift_programs)
         .service(get_timeshift_stream)
+        .service(get_timeshift_program_stream)
         .service(get_iptv_playlist)
         .service(get_iptv_epg)
         .service(get_docs)
@@ -480,9 +481,35 @@ async fn get_timeshift_stream(
         &config.post_filters, &filter_setting.post_filters)?;
     let (filters, content_type) = builder.build();
 
-    let stream = timeshift_manager.send(StartTimeshiftStreamingMessage {
+    let stream = timeshift_manager.send(StartTimeshiftLiveStreamingMessage {
         record: path.record.clone(),
         program: stream_query.program,
+    }).await??;
+
+    streaming(&config, user, stream, filters, content_type, ()).await
+}
+
+#[actix_web::get("/timeshift/{record}/programs/{program}/stream")]
+async fn get_timeshift_program_stream(
+    config: actix_web::web::Data<Arc<Config>>,
+    timeshift_manager: actix_web::web::Data<Addr<TimeshiftManagerActor>>,
+    path: actix_web::web::Path<TimeshiftProgramPath>,
+    user: TunerUser,
+    filter_setting: FilterSetting,
+) -> ApiResult {
+    let data = mustache::MapBuilder::new()
+        .build();
+
+    let mut builder = FilterPipelineBuilder::new(data);
+    builder.add_pre_filters(
+        &config.pre_filters, &filter_setting.pre_filters)?;
+    builder.add_post_filters(
+        &config.post_filters, &filter_setting.post_filters)?;
+    let (filters, content_type) = builder.build();
+
+    let stream = timeshift_manager.send(StartTimeshiftOnDemandStreamingMessage {
+        record: path.record.clone(),
+        program: path.program.clone(),
     }).await??;
 
     streaming(&config, user, stream, filters, content_type, ()).await
@@ -790,6 +817,12 @@ struct ProgramPath {
 #[derive(Deserialize)]
 struct TimeshiftRecordPath {
     record: String,
+}
+
+#[derive(Deserialize)]
+struct TimeshiftProgramPath {
+    record: String,
+    program: MirakurunProgramId,
 }
 
 #[derive(Deserialize)]
@@ -1302,6 +1335,11 @@ mod tests {
 
         //let res = get("/api/timeshift/not_found/stream").await;
         //assert!(res.status() == actix_web::http::StatusCode::NOT_FOUND);
+    }
+
+    #[actix_rt::test]
+    async fn test_get_timeshift_program_stream() {
+        // TODO
     }
 
     #[actix_rt::test]

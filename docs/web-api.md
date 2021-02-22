@@ -24,6 +24,7 @@ Web API endpoints listed below have been implemented at this moment:
 | [/api/timeshift/{record}]                       |                            |
 | [/api/timeshift/{record}/programs]              |                            |
 | [/api/timeshift/{record}/stream]                |                            |
+| [/api/timeshift/{record}/programs/{program}/stream]|                         |
 
 The endpoints above are enough to run [EPGStation].
 
@@ -46,6 +47,7 @@ Web API endpoints listed below have been implemented as the mirakc extensions:
 * [/api/timeshift/{record}]
 * [/api/timeshift/{record}/programs]
 * [/api/timeshift/{record}/stream]
+* [/api/timeshift/{record}/programs/{program}/stream]
 
 [/api/version]: #apiversion
 [/api/status]: #apistatus
@@ -66,6 +68,7 @@ Web API endpoints listed below have been implemented as the mirakc extensions:
 [/api/timeshift/{record}]: #apitimeshiftrecord
 [/api/timeshift/{record}/programs]: #apitimeshiftrecordprograms
 [/api/timeshift/{record}/stream]: #apitimeshiftrecordstream
+[/api/timeshift/{record}/programs/{program}/stream]: #apitimeshiftrecordprogramsprogramstream
 
 ## Incompatibility of the `X-Mirakurun-Priority` header
 
@@ -216,13 +219,27 @@ Returns a list of programs in a timeshift record.
 
 ### /api/timeshift/{record}/stream
 
-Starts streaming for a timeshift record.
+Starts live streaming for a timeshift record.
 
-The following command starts streaming from a program specified by Mirakurun
+The following command starts live streaming from a program specified by Mirakurun
 program ID (327370103203256):
 
 ```
 curl -sG http://mirakc:40772/api/timeshift/etv/stream?program=327370103203256
+```
+
+You can specify pre-filters and post-filters like any other endpoint for
+streaming, but you don't need to specify the decode filter unlike others.
+
+### /api/timeshift/{record}/programs/{program}/stream
+
+Starts on-demand streaming for a TV program in a timeshift record.
+
+The following command starts on-demand streaming from a program specified by Mirakurun
+program ID (327370103203256):
+
+```
+curl -sG http://mirakc:40772/api/timeshift/etv/programs/327370103203256/stream
 ```
 
 You can specify pre-filters and post-filters like any other endpoint for

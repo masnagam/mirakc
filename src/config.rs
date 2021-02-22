@@ -345,6 +345,10 @@ pub struct TimeshiftConfig {
 impl TimeshiftConfig {
     const BUFSIZE: usize = 8192;
 
+    pub fn max_file_size(&self) -> u64 {
+        (self.chunk_size as u64) * (self.num_chunks as u64)
+    }
+
     pub fn max_chunks(&self) -> usize {
         assert!(self.num_chunks > self.num_gaps);
         self.num_chunks - self.num_gaps

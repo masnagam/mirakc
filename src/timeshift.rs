@@ -9,7 +9,7 @@ use actix::prelude::*;
 use chrono::DateTime;
 use serde::Deserialize;
 use tokio::prelude::*;
-use tokio::io::{AsyncSeek, BufReader, SeekFrom};
+use tokio::io::{AsyncSeek, BufReader, SeekFrom, Take};
 use tokio::fs::File;
 
 use crate::config::{Config, TimeshiftConfig};
@@ -33,7 +33,8 @@ pub fn start(
 
 // timeshift manager
 
-type TimeshiftStream = MpegTsStream<usize, ChunkStream<TimeshiftFile>>;
+type TimeshiftLiveStream = MpegTsStream<usize, ChunkStream<TimeshiftFile>>;
+type TimeshiftOnDemandStream = MpegTsStream<usize, ChunkStream<Take<TimeshiftFile>>>;
 
 pub struct TimeshiftManager {
     config: Arc<Config>,
@@ -47,13 +48,22 @@ impl TimeshiftManager {
         TimeshiftManager { config, tuner_manager, records, }
     }
 
-    fn create_stream_source(
+    fn create_live_stream_source(
         &self,
         record_id: &str,
         program_id: Option<MirakurunProgramId>,
-    ) -> Result<TimeshiftStreamSource, Error> {
+    ) -> Result<TimeshiftLiveStreamSource, Error> {
         let record = self.records.get(record_id).ok_or(Error::RecordNotFound)?;
-        record.create_stream_source(program_id)
+        record.create_live_stream_source(program_id)
+    }
+
+    fn create_on_demand_stream_source(
+        &self,
+        record_id: &str,
+        program_id: MirakurunProgramId,
+    ) -> Result<TimeshiftOnDemandStreamSource, Error> {
+        let record = self.records.get(record_id).ok_or(Error::RecordNotFound)?;
+        record.create_on_demand_stream_source(program_id)
     }
 
     fn start_recording(&mut self, name: &str) {
@@ -323,32 +333,62 @@ impl Handler<QueryTimeshiftProgramsMessage> for TimeshiftManager {
 }
 
 #[derive(Message)]
-#[rtype(result = "Result<TimeshiftStream, Error>")]
-pub struct StartTimeshiftStreamingMessage {
+#[rtype(result = "Result<TimeshiftLiveStream, Error>")]
+pub struct StartTimeshiftLiveStreamingMessage {
     pub record: String,
     pub program: Option<MirakurunProgramId>,
 }
 
-impl fmt::Display for StartTimeshiftStreamingMessage {
+impl fmt::Display for StartTimeshiftLiveStreamingMessage {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if let Some(id) = self.program {
-            write!(f, "StartTimeshiftStreaming for {} from program#{}", self.record, id)
+            write!(f, "StartTimeshiftLiveStreaming for {} from program#{}", self.record, id)
         } else {
-            write!(f, "StartTimeshiftStreaming for {}", self.record)
+            write!(f, "StartTimeshiftLiveStreaming for {}", self.record)
         }
     }
 }
 
-impl Handler<StartTimeshiftStreamingMessage> for TimeshiftManager {
-    type Result = ResponseFuture<Result<TimeshiftStream, Error>>;
+impl Handler<StartTimeshiftLiveStreamingMessage> for TimeshiftManager {
+    type Result = ResponseFuture<Result<TimeshiftLiveStream, Error>>;
 
     fn handle(
         &mut self,
-        msg: StartTimeshiftStreamingMessage,
+        msg: StartTimeshiftLiveStreamingMessage,
         _: &mut Self::Context,
     ) -> Self::Result {
         log::debug!("{}", msg);
-        let src = self.create_stream_source(&msg.record, msg.program);
+        let src = self.create_live_stream_source(&msg.record, msg.program);
+        Box::pin(async move {
+            src?.create_stream().await
+        })
+    }
+}
+
+#[derive(Message)]
+#[rtype(result = "Result<TimeshiftOnDemandStream, Error>")]
+pub struct StartTimeshiftOnDemandStreamingMessage {
+    pub record: String,
+    pub program: MirakurunProgramId,
+}
+
+impl fmt::Display for StartTimeshiftOnDemandStreamingMessage {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "StartTimeshiftOnDemandStreaming for {} from program#{}",
+               self.record, self.program)
+    }
+}
+
+impl Handler<StartTimeshiftOnDemandStreamingMessage> for TimeshiftManager {
+    type Result = ResponseFuture<Result<TimeshiftOnDemandStream, Error>>;
+
+    fn handle(
+        &mut self,
+        msg: StartTimeshiftOnDemandStreamingMessage,
+        _: &mut Self::Context,
+    ) -> Self::Result {
+        log::debug!("{}", msg);
+        let src = self.create_on_demand_stream_source(&msg.record, msg.program);
         Box::pin(async move {
             src?.create_stream().await
         })
@@ -440,10 +480,10 @@ impl TimeshiftRecord {
         }
     }
 
-    fn create_stream_source(
+    fn create_live_stream_source(
         &self,
         program_id: Option<MirakurunProgramId>,
-    ) -> Result<TimeshiftStreamSource, Error> {
+    ) -> Result<TimeshiftLiveStreamSource, Error> {
         if self.points.len() < 2 {
             return Err(Error::RecordNotFound)
         }
@@ -458,7 +498,30 @@ impl TimeshiftRecord {
         } else {
             self.points[0].clone()
         };
-        Ok(TimeshiftStreamSource { name, file, point })
+        Ok(TimeshiftLiveStreamSource { name, file, point })
+    }
+
+    fn create_on_demand_stream_source(
+        &self,
+        program_id: MirakurunProgramId,
+    ) -> Result<TimeshiftOnDemandStreamSource, Error> {
+        if self.points.len() < 2 {
+            return Err(Error::RecordNotFound)
+        }
+        let name = self.name.clone();
+        let file = self.config.file.clone();
+        let program = self.programs.iter()
+                .find(|program| program_id == program.epg.quad.into())
+                .ok_or(Error::ProgramNotFound)?;
+        let start = program.start.clone();
+        let end = program.end.clone();
+        let size = if end.pos > start.pos {
+            end.pos - start.pos
+        } else {
+            assert!(end.pos < start.pos);
+            self.config.max_file_size() - start.pos + end.pos
+        };
+        Ok(TimeshiftOnDemandStreamSource { name, file, start, end, size })
     }
 
     fn start_recording(&mut self) {
@@ -642,21 +705,43 @@ struct TimeshiftProgram {
     end: TimeshiftPoint,
 }
 
-struct TimeshiftStreamSource {
+struct TimeshiftLiveStreamSource {
     name: String,
     file: String,
     point: TimeshiftPoint,
 }
 
-impl TimeshiftStreamSource {
+impl TimeshiftLiveStreamSource {
     // 32 KiB, large enough for 10 ms buffering.
     const CHUNK_SIZE: usize = 4096 * 8;
 
-    async fn create_stream(&self) -> Result<TimeshiftStream, Error> {
-        log::debug!("{}: Start streaming from {}@{}",
-                    self.name, self.point.timestamp, self.point.pos);
+    async fn create_stream(self) -> Result<TimeshiftLiveStream, Error> {
+        log::debug!("{}: Start live streaming from {}", self.name, self.point);
         let mut file = TimeshiftFile::open(&self.file).await?;
         file.set_position(self.point.pos).await?;
+        let reader = ChunkStream::new(file, Self::CHUNK_SIZE);
+        Ok(MpegTsStream::new(0, reader))  // TODO: id
+    }
+}
+
+struct TimeshiftOnDemandStreamSource {
+    name: String,
+    file: String,
+    start: TimeshiftPoint,
+    end: TimeshiftPoint,
+    size: u64,
+}
+
+impl TimeshiftOnDemandStreamSource {
+    // 32 KiB, large enough for 10 ms buffering.
+    const CHUNK_SIZE: usize = 4096 * 8;
+
+    async fn create_stream(self) -> Result<TimeshiftOnDemandStream, Error> {
+        log::debug!("{}: Start on-demand streaming from {} to {}",
+                    self.name, self.start, self.end);
+        let mut file = TimeshiftFile::open(&self.file).await?;
+        file.set_position(self.start.pos).await?;
+        let file = file.take(self.size);
         let reader = ChunkStream::new(file, Self::CHUNK_SIZE);
         Ok(MpegTsStream::new(0, reader))  // TODO: id
     }
