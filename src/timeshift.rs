@@ -64,8 +64,8 @@ impl TimeshiftManager {
         self.records.get_mut(name).unwrap().stop_recording(reset);
     }
 
-    fn handle_chunk_timestamp(&mut self, name: &str, point: TimeshiftPoint) {
-        self.records.get_mut(name).unwrap().handle_chunk_timestamp(point);
+    fn handle_chunk(&mut self, name: &str, point: TimeshiftPoint) {
+        self.records.get_mut(name).unwrap().handle_chunk(point);
     }
 
     fn handle_event_start(
@@ -107,7 +107,7 @@ impl TimeshiftManager {
         for name in config.timeshift.keys() {
             match Self::activate_recorder(name, &config, &tuner_manager, manager.clone()).await {
                 Ok(recorder) => {
-                    log::info!("Activated a timeshift recorder for {}", name);
+                    log::debug!("Activated a timeshift recorder for {}", name);
                     recorders.push(recorder);
                 }
                 Err(err) => {
@@ -363,7 +363,7 @@ impl Handler<StartTimeshiftStreamingMessage> for TimeshiftManager {
 enum TimeshiftMessage {
     Start(TimeshiftStartMessage),
     Stop(TimeshiftStopMessage),
-    ChunkTimestamp(TimeshiftChunkTimestampMessage),
+    Chunk(TimeshiftChunkMessage),
     EventStart(TimeshiftEventMessage),
     EventUpdate(TimeshiftEventMessage),
     EventEnd(TimeshiftEventMessage),
@@ -374,10 +374,14 @@ impl Handler<TimeshiftMessage> for TimeshiftManager {
 
     fn handle(&mut self, msg: TimeshiftMessage, _: &mut Self::Context) -> Self::Result {
         match msg {
-            TimeshiftMessage::Start(msg) => self.start_recording(&msg.id),
-            TimeshiftMessage::Stop(msg) => self.stop_recording(&msg.id, msg.reset),
-            TimeshiftMessage::ChunkTimestamp(msg) => {
-                self.handle_chunk_timestamp(&msg.id, msg.chunk);
+            TimeshiftMessage::Start(msg) => {
+                self.start_recording(&msg.id);
+            }
+            TimeshiftMessage::Stop(msg) => {
+                self.stop_recording(&msg.id, msg.reset);
+            }
+            TimeshiftMessage::Chunk(msg) => {
+                self.handle_chunk(&msg.id, msg.chunk);
             }
             TimeshiftMessage::EventStart(msg) => {
                 let quad = EventQuad::new(
@@ -470,7 +474,7 @@ impl TimeshiftRecord {
         }
     }
 
-    fn handle_chunk_timestamp(&mut self, point: TimeshiftPoint) {
+    fn handle_chunk(&mut self, point: TimeshiftPoint) {
         self.maintain();
         self.append_point(point);
     }
@@ -505,7 +509,7 @@ impl TimeshiftRecord {
     fn append_point(&mut self, point: TimeshiftPoint) {
         let index = point.pos / (self.config.chunk_size as u64);
         assert!(point.pos % (self.config.chunk_size as u64) == 0);
-        log::info!("{}: Chunk#{}: Timestamp: {}", self.name, index, point.timestamp);
+        log::debug!("{}: Chunk#{}: Timestamp: {}", self.name, index, point.timestamp);
         self.points.push(point);
         assert!(self.points.len() <= self.config.max_chunks());
     }
@@ -534,7 +538,7 @@ impl TimeshiftRecord {
     ) {
         let mut epg = EpgProgram::new(quad);
         epg.update(&event);
-        log::info!("{}: Program#{}: Updated: {}: {}", self.name, quad, point, epg.name());
+        log::debug!("{}: Program#{}: Updated: {}: {}", self.name, quad, point, epg.name());
         self.update_last_program(epg, point);
     }
 
@@ -600,7 +604,7 @@ struct TimeshiftStopMessage {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct TimeshiftChunkTimestampMessage {
+struct TimeshiftChunkMessage {
     id: String,
     chunk: TimeshiftPoint,
 }
@@ -649,8 +653,8 @@ impl TimeshiftStreamSource {
     const CHUNK_SIZE: usize = 4096 * 8;
 
     async fn create_stream(&self) -> Result<TimeshiftStream, Error> {
-        log::info!("{}: Start streaming from {}@{}",
-                   self.name, self.point.timestamp, self.point.pos);
+        log::debug!("{}: Start streaming from {}@{}",
+                    self.name, self.point.timestamp, self.point.pos);
         let mut file = TimeshiftFile::open(&self.file).await?;
         file.set_position(self.point.pos).await?;
         let reader = ChunkStream::new(file, Self::CHUNK_SIZE);
