@@ -435,7 +435,7 @@ async fn get_timeshift_recorders(
     timeshift_manager: actix_web::web::Data<Addr<TimeshiftManagerActor>>,
 ) -> ApiResult {
     timeshift_manager.send(QueryTimeshiftRecordersMessage).await?
-        .map(|records| actix_web::HttpResponse::Ok().json(records))
+        .map(|recorders| actix_web::HttpResponse::Ok().json(recorders))
 }
 
 #[actix_web::get("/timeshift/{recorder}")]
@@ -457,8 +457,6 @@ async fn get_timeshift_records(
     timeshift_manager.send(QueryTimeshiftRecordsMessage {
         recorder_name: path.recorder.clone(),
     }).await?
-        .map(|records| records.into_iter()
-             .map(MirakurunProgram::from).collect::<Vec<MirakurunProgram>>())
         .map(|records| actix_web::HttpResponse::Ok().json(records))
 }
 
@@ -1646,7 +1644,7 @@ mod tests {
                 };
                 Box::<Option<Result<_, Error>>>::new(Some(result))
             } else if let Some(_) = msg.downcast_ref::<QueryTimeshiftRecordsMessage>() {
-                Box::<Option<Result<Vec<EpgProgram>, Error>>>::new(
+                Box::<Option<Result<Vec<TimeshiftRecordModel>, Error>>>::new(
                     Some(Ok(Vec::new())))
             } else {
                 unimplemented!();

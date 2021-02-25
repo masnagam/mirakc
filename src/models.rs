@@ -674,6 +674,16 @@ pub struct TimeshiftRecorderModel {
     pub recording: bool,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TimeshiftRecordModel {
+    pub program: MirakurunProgram,
+    pub start_time: DateTime<Jst>,
+    #[serde(with = "serde_duration_in_millis")]
+    pub duration: Duration,
+    pub size: u64,
+}
+
 #[cfg(test)]
 mod test_helper {
     use super::*;

@@ -259,7 +259,7 @@ impl Handler<QueryTimeshiftRecordersMessage> for TimeshiftManager {
     ) -> Self::Result {
         log::debug!("{}", msg);
         let models: Vec<TimeshiftRecorderModel> = self.recorders.values()
-            .map(|record| record.get_model())
+            .map(|recorder| recorder.get_model())
             .collect();
         MessageResult(Ok(models))
     }
@@ -286,15 +286,15 @@ impl Handler<QueryTimeshiftRecorderMessage> for TimeshiftManager {
         _: &mut Self::Context,
     ) -> Self::Result {
         log::debug!("{}", msg);
-        let result = self.recorders.get(&msg.name)
+        let model = self.recorders.get(&msg.name)
             .map(|recorder| recorder.get_model())
             .ok_or(Error::RecordNotFound);
-        MessageResult(result)
+        MessageResult(model)
     }
 }
 
 #[derive(Message)]
-#[rtype(result = "Result<Vec<EpgProgram>, Error>")]
+#[rtype(result = "Result<Vec<TimeshiftRecordModel>, Error>")]
 pub struct QueryTimeshiftRecordsMessage {
     pub recorder_name: String,
 }
@@ -314,14 +314,14 @@ impl Handler<QueryTimeshiftRecordsMessage> for TimeshiftManager {
         _: &mut Self::Context,
     ) -> Self::Result {
         log::debug!("{}", msg);
-        let result = self.recorders.get(&msg.recorder_name)
+        let models = self.recorders.get(&msg.recorder_name)
             .map(|recorder| {
                 recorder.records.iter()
-                    .map(|record| record.program.clone())
-                    .collect::<Vec<EpgProgram>>()
+                    .map(|record| record.get_model(&recorder.config))
+                    .collect::<Vec<TimeshiftRecordModel>>()
             })
             .ok_or(Error::RecordNotFound);
-        MessageResult(result)
+        MessageResult(models)
     }
 }
 
@@ -691,6 +691,25 @@ struct TimeshiftRecord {
     program: EpgProgram,
     start: TimeshiftPoint,
     end: TimeshiftPoint,
+}
+
+impl TimeshiftRecord {
+    fn get_size(&self, file_size: u64) -> u64 {
+        if self.end.pos < self.start.pos {
+            file_size - self.start.pos + self.end.pos
+        } else {
+            self.end.pos - self.start.pos
+        }
+    }
+
+    fn get_model(&self, config: &TimeshiftConfig) -> TimeshiftRecordModel {
+        TimeshiftRecordModel {
+            program: self.program.clone().into(),
+            start_time: self.start.timestamp.clone(),
+            duration: self.end.timestamp - self.start.timestamp,
+            size: self.get_size(config.max_file_size()),
+        }
+    }
 }
 
 struct TimeshiftStreamSource {
