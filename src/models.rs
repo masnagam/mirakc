@@ -666,7 +666,7 @@ impl From<AudioComponentDescriptor> for MirakurunProgramAudio {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct TimeshiftRecordModel {
+pub struct TimeshiftRecorderModel {
     pub name: String,
     pub start_time: DateTime<Jst>,
     #[serde(with = "serde_duration_in_millis")]

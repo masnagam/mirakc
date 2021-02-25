@@ -182,11 +182,11 @@ fn create_api_service() -> impl actix_web::dev::HttpServiceFactory {
         .service(get_channel_service_stream)
         .service(get_service_stream)
         .service(get_program_stream)
+        .service(get_timeshift_recorders)
+        .service(get_timeshift_recorder)
         .service(get_timeshift_records)
-        .service(get_timeshift_record)
-        .service(get_timeshift_programs)
         .service(get_timeshift_stream)
-        .service(get_timeshift_program_stream)
+        .service(get_timeshift_record_stream)
         .service(get_iptv_playlist)
         .service(get_iptv_epg)
         .service(get_docs)
@@ -431,42 +431,42 @@ async fn get_program_stream(
 }
 
 #[actix_web::get("/timeshift")]
-async fn get_timeshift_records(
+async fn get_timeshift_recorders(
     timeshift_manager: actix_web::web::Data<Addr<TimeshiftManagerActor>>,
 ) -> ApiResult {
-    timeshift_manager.send(QueryTimeshiftRecordsMessage).await?
+    timeshift_manager.send(QueryTimeshiftRecordersMessage).await?
         .map(|records| actix_web::HttpResponse::Ok().json(records))
 }
 
-#[actix_web::get("/timeshift/{record}")]
-async fn get_timeshift_record(
+#[actix_web::get("/timeshift/{recorder}")]
+async fn get_timeshift_recorder(
     timeshift_manager: actix_web::web::Data<Addr<TimeshiftManagerActor>>,
-    path: actix_web::web::Path<TimeshiftRecordPath>,
+    path: actix_web::web::Path<TimeshiftRecorderPath>,
 ) -> ApiResult {
-    timeshift_manager.send(QueryTimeshiftRecordMessage {
-        record: path.record.clone(),
+    timeshift_manager.send(QueryTimeshiftRecorderMessage {
+        name: path.recorder.clone(),
     }).await?
-        .map(|record| actix_web::HttpResponse::Ok().json(record))
+        .map(|recorder| actix_web::HttpResponse::Ok().json(recorder))
 }
 
-#[actix_web::get("/timeshift/{record}/programs")]
-async fn get_timeshift_programs(
+#[actix_web::get("/timeshift/{recorder}/records")]
+async fn get_timeshift_records(
     timeshift_manager: actix_web::web::Data<Addr<TimeshiftManagerActor>>,
-    path: actix_web::web::Path<TimeshiftRecordPath>,
+    path: actix_web::web::Path<TimeshiftRecorderPath>,
 ) -> ApiResult {
-    timeshift_manager.send(QueryTimeshiftProgramsMessage {
-        record: path.record.clone(),
+    timeshift_manager.send(QueryTimeshiftRecordsMessage {
+        recorder_name: path.recorder.clone(),
     }).await?
-        .map(|programs| programs.into_iter()
+        .map(|records| records.into_iter()
              .map(MirakurunProgram::from).collect::<Vec<MirakurunProgram>>())
-        .map(|programs| actix_web::HttpResponse::Ok().json(programs))
+        .map(|records| actix_web::HttpResponse::Ok().json(records))
 }
 
-#[actix_web::get("/timeshift/{record}/stream")]
+#[actix_web::get("/timeshift/{recorder}/stream")]
 async fn get_timeshift_stream(
     config: actix_web::web::Data<Arc<Config>>,
     timeshift_manager: actix_web::web::Data<Addr<TimeshiftManagerActor>>,
-    path: actix_web::web::Path<TimeshiftRecordPath>,
+    path: actix_web::web::Path<TimeshiftRecorderPath>,
     user: TunerUser,
     stream_query: actix_web::web::Query<TimeshiftStreamQuery>,
     filter_setting: FilterSetting,
@@ -481,19 +481,19 @@ async fn get_timeshift_stream(
         &config.post_filters, &filter_setting.post_filters)?;
     let (filters, content_type) = builder.build();
 
-    let stream = timeshift_manager.send(StartTimeshiftLiveStreamingMessage {
-        record: path.record.clone(),
-        program: stream_query.program,
+    let stream = timeshift_manager.send(StartTimeshiftStreamingMessage {
+        recorder_name: path.recorder.clone(),
+        record_id: stream_query.record,
     }).await??;
 
     streaming(&config, user, stream, filters, content_type, ()).await
 }
 
-#[actix_web::get("/timeshift/{record}/programs/{program}/stream")]
-async fn get_timeshift_program_stream(
+#[actix_web::get("/timeshift/{recorder}/records/{record}/stream")]
+async fn get_timeshift_record_stream(
     config: actix_web::web::Data<Arc<Config>>,
     timeshift_manager: actix_web::web::Data<Addr<TimeshiftManagerActor>>,
-    path: actix_web::web::Path<TimeshiftProgramPath>,
+    path: actix_web::web::Path<TimeshiftRecordPath>,
     user: TunerUser,
     filter_setting: FilterSetting,
 ) -> ApiResult {
@@ -507,9 +507,9 @@ async fn get_timeshift_program_stream(
         &config.post_filters, &filter_setting.post_filters)?;
     let (filters, content_type) = builder.build();
 
-    let stream = timeshift_manager.send(StartTimeshiftOnDemandStreamingMessage {
-        record: path.record.clone(),
-        program: path.program.clone(),
+    let stream = timeshift_manager.send(StartTimeshiftRecordStreamingMessage{
+        recorder_name: path.recorder.clone(),
+        record_id: path.record.clone(),
     }).await??;
 
     streaming(&config, user, stream, filters, content_type, ()).await
@@ -815,20 +815,20 @@ struct ProgramPath {
 }
 
 #[derive(Deserialize)]
-struct TimeshiftRecordPath {
-    record: String,
+struct TimeshiftRecorderPath {
+    recorder: String,
 }
 
 #[derive(Deserialize)]
-struct TimeshiftProgramPath {
-    record: String,
-    program: MirakurunProgramId,
+struct TimeshiftRecordPath {
+    recorder: String,
+    record: MirakurunProgramId,
 }
 
 #[derive(Deserialize)]
 struct TimeshiftStreamQuery {
     #[serde(default)]
-    program: Option<MirakurunProgramId>,
+    record: Option<MirakurunProgramId>,
 }
 
 // actix-web uses the serde_urlencoded crate for parsing the query in an URL.
@@ -1305,13 +1305,13 @@ mod tests {
     }
 
     #[actix_rt::test]
-    async fn test_get_timeshift_records() {
+    async fn test_get_timeshift_recorders() {
         let res = get("/api/timeshift").await;
         assert!(res.status() == actix_web::http::StatusCode::OK);
     }
 
     #[actix_rt::test]
-    async fn test_get_timeshift_record() {
+    async fn test_get_timeshift_recorder() {
         let res = get("/api/timeshift/test").await;
         assert!(res.status() == actix_web::http::StatusCode::OK);
 
@@ -1320,8 +1320,8 @@ mod tests {
     }
 
     #[actix_rt::test]
-    async fn test_get_timeshift_programs() {
-        let res = get("/api/timeshift/test/programs").await;
+    async fn test_get_timeshift_records() {
+        let res = get("/api/timeshift/test/records").await;
         assert!(res.status() == actix_web::http::StatusCode::OK);
     }
 
@@ -1630,12 +1630,12 @@ mod tests {
 
     fn timeshift_manager_for_test() -> Addr<TimeshiftManagerActor> {
         TimeshiftManagerActor::mock(Box::new(|msg, _ctx| {
-            if let Some(_) = msg.downcast_ref::<QueryTimeshiftRecordsMessage>() {
-                Box::<Option<Result<Vec<TimeshiftRecordModel>, Error>>>::new(
+            if let Some(_) = msg.downcast_ref::<QueryTimeshiftRecordersMessage>() {
+                Box::<Option<Result<Vec<TimeshiftRecorderModel>, Error>>>::new(
                     Some(Ok(Vec::new())))
-            } else if let Some(msg) = msg.downcast_ref::<QueryTimeshiftRecordMessage>() {
-                let result = if msg.record == "test" {
-                    Ok(TimeshiftRecordModel {
+            } else if let Some(msg) = msg.downcast_ref::<QueryTimeshiftRecorderMessage>() {
+                let result = if msg.name == "test" {
+                    Ok(TimeshiftRecorderModel {
                         name: "test".to_string(),
                         start_time: Jst::now(),
                         duration: chrono::Duration::seconds(1),
@@ -1645,7 +1645,7 @@ mod tests {
                     Err(Error::RecordNotFound)
                 };
                 Box::<Option<Result<_, Error>>>::new(Some(result))
-            } else if let Some(_) = msg.downcast_ref::<QueryTimeshiftProgramsMessage>() {
+            } else if let Some(_) = msg.downcast_ref::<QueryTimeshiftRecordsMessage>() {
                 Box::<Option<Result<Vec<EpgProgram>, Error>>>::new(
                     Some(Ok(Vec::new())))
             } else {

@@ -21,10 +21,10 @@ Web API endpoints listed below have been implemented at this moment:
 | [/api/iptv/playlist]                            |                            |
 | [/api/iptv/epg]                                 |                            |
 | [/api/timeshift]                                |                            |
-| [/api/timeshift/{record}]                       |                            |
-| [/api/timeshift/{record}/programs]              |                            |
-| [/api/timeshift/{record}/stream]                |                            |
-| [/api/timeshift/{record}/programs/{program}/stream]|                         |
+| [/api/timeshift/{recorder}]                     |                            |
+| [/api/timeshift/{recorder}/records]             |                            |
+| [/api/timeshift/{recorder}/stream]              |                            |
+| [/api/timeshift/{recorder}/records/{record}/stream]|                         |
 
 The endpoints above are enough to run [EPGStation].
 
@@ -44,10 +44,10 @@ Web API endpoints listed below have been implemented as the mirakc extensions:
 
 * [/api/iptv/playlist]
 * [/api/timeshift]
-* [/api/timeshift/{record}]
-* [/api/timeshift/{record}/programs]
-* [/api/timeshift/{record}/stream]
-* [/api/timeshift/{record}/programs/{program}/stream]
+* [/api/timeshift/{recorder}]
+* [/api/timeshift/{recorder}/programs]
+* [/api/timeshift/{recorder}/stream]
+* [/api/timeshift/{recorder}/records/{record}/stream]
 
 [/api/version]: #apiversion
 [/api/status]: #apistatus
@@ -65,10 +65,10 @@ Web API endpoints listed below have been implemented as the mirakc extensions:
 [/api/iptv/playlist]: #apiiptvplaylist
 [/api/iptv/epg]: #apiiptvepg
 [/api/timeshift]: #apitimeshift
-[/api/timeshift/{record}]: #apitimeshiftrecord
-[/api/timeshift/{record}/programs]: #apitimeshiftrecordprograms
-[/api/timeshift/{record}/stream]: #apitimeshiftrecordstream
-[/api/timeshift/{record}/programs/{program}/stream]: #apitimeshiftrecordprogramsprogramstream
+[/api/timeshift/{recorder}]: #apitimeshiftrecorder
+[/api/timeshift/{recorder}/programs]: #apitimeshiftrecorderprograms
+[/api/timeshift/{recorder}/stream]: #apitimeshiftrecorderstream
+[/api/timeshift/{recorder}/records/{record}/stream]: #apitimeshiftrecorderrecordsrecordstream
 
 ## Incompatibility of the `X-Mirakurun-Priority` header
 
@@ -203,43 +203,41 @@ The following query parameters can be specified:
 [EPGStation]: https://github.com/l3tnun/EPGStation
 [BonDriver_mirakc]: https://github.com/epgdatacapbon/BonDriver_mirakc
 
-## Web API endpoints for timeshift playback
+## Web API endpoints for timeshift recording and playback
 
 ### /api/timeshift
 
-Returns a list of timeshift records.
+Returns a list of timeshift recorders.
 
-### /api/timeshift/{record}
+### /api/timeshift/{recorder}
 
-Returns a timeshift record.
+Returns a timeshift recorder.
 
-### /api/timeshift/{record}/programs
+### /api/timeshift/{recorder}/records
 
-Returns a list of programs in a timeshift record.
+Returns a list of records in a timeshift recorder.
 
-### /api/timeshift/{record}/stream
+### /api/timeshift/{recorder}/stream
 
-Starts live streaming for a timeshift record.
+Starts live streaming for a timeshift recorder.
 
-The following command starts live streaming from a program specified by Mirakurun
-program ID (327370103203256):
+The following command starts live streaming from a specific record:
 
 ```
-curl -sG http://mirakc:40772/api/timeshift/etv/stream?program=327370103203256
+curl -sG http://mirakc:40772/api/timeshift/etv/stream?record=1
 ```
 
 You can specify pre-filters and post-filters like any other endpoint for
 streaming, but you don't need to specify the decode filter unlike others.
 
-### /api/timeshift/{record}/programs/{program}/stream
+### /api/timeshift/{recorder}/records/{record}/stream
 
-Starts on-demand streaming for a TV program in a timeshift record.
+Starts on-demand streaming for a record in a timeshift recorder.
 
-The following command starts on-demand streaming from a program specified by Mirakurun
-program ID (327370103203256):
+The following command starts on-demand streaming from a specific record:
 
 ```
-curl -sG http://mirakc:40772/api/timeshift/etv/programs/327370103203256/stream
+curl -sG http://mirakc:40772/api/timeshift/etv/records/1/stream
 ```
 
 You can specify pre-filters and post-filters like any other endpoint for

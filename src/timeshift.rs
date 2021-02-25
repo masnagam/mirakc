@@ -33,49 +33,49 @@ pub fn start(
 
 // timeshift manager
 
-type TimeshiftLiveStream = MpegTsStream<usize, ChunkStream<TimeshiftFile>>;
-type TimeshiftOnDemandStream = MpegTsStream<usize, ChunkStream<Take<TimeshiftFile>>>;
+type TimeshiftStream = MpegTsStream<usize, ChunkStream<TimeshiftFile>>;
+type TimeshiftRecordStream = MpegTsStream<usize, ChunkStream<Take<TimeshiftFile>>>;
 
 pub struct TimeshiftManager {
     config: Arc<Config>,
     tuner_manager: Addr<TunerManager>,
-    records: HashMap<String, TimeshiftRecord>,
+    recorders: HashMap<String, TimeshiftRecorder>,
 }
 
 impl TimeshiftManager {
     pub fn new(config: Arc<Config>, tuner_manager: Addr<TunerManager>) -> Self {
-        let records = HashMap::new();
-        TimeshiftManager { config, tuner_manager, records, }
+        let recorders = HashMap::new();
+        TimeshiftManager { config, tuner_manager, recorders, }
     }
 
     fn create_live_stream_source(
         &self,
-        record_id: &str,
-        program_id: Option<MirakurunProgramId>,
-    ) -> Result<TimeshiftLiveStreamSource, Error> {
-        let record = self.records.get(record_id).ok_or(Error::RecordNotFound)?;
-        record.create_live_stream_source(program_id)
+        recorder_name: &str,
+        record_id: Option<MirakurunProgramId>,
+    ) -> Result<TimeshiftStreamSource, Error> {
+        let recorder = self.recorders.get(recorder_name).ok_or(Error::RecordNotFound)?;
+        recorder.create_live_stream_source(record_id)
     }
 
     fn create_on_demand_stream_source(
         &self,
-        record_id: &str,
-        program_id: MirakurunProgramId,
-    ) -> Result<TimeshiftOnDemandStreamSource, Error> {
-        let record = self.records.get(record_id).ok_or(Error::RecordNotFound)?;
-        record.create_on_demand_stream_source(program_id)
+        recorder_name: &str,
+        record_id: MirakurunProgramId,
+    ) -> Result<TimeshiftRecordStreamSource, Error> {
+        let recorder = self.recorders.get(recorder_name).ok_or(Error::RecordNotFound)?;
+        recorder.create_on_demand_stream_source(record_id)
     }
 
     fn start_recording(&mut self, name: &str) {
-        self.records.get_mut(name).unwrap().start_recording();
+        self.recorders.get_mut(name).unwrap().start_recording();
     }
 
     fn stop_recording(&mut self, name: &str, reset: bool) {
-        self.records.get_mut(name).unwrap().stop_recording(reset);
+        self.recorders.get_mut(name).unwrap().stop_recording(reset);
     }
 
     fn handle_chunk(&mut self, name: &str, point: TimeshiftPoint) {
-        self.records.get_mut(name).unwrap().handle_chunk(point);
+        self.recorders.get_mut(name).unwrap().handle_chunk(point);
     }
 
     fn handle_event_start(
@@ -85,7 +85,7 @@ impl TimeshiftManager {
         event: EitEvent,
         point: TimeshiftPoint,
     ) {
-        self.records.get_mut(name).unwrap().handle_event_start(quad, event, point);
+        self.recorders.get_mut(name).unwrap().handle_event_start(quad, event, point);
     }
 
     fn handle_event_update(
@@ -95,7 +95,7 @@ impl TimeshiftManager {
         event: EitEvent,
         point: TimeshiftPoint,
     ) {
-        self.records.get_mut(name).unwrap().handle_event_update(quad, event, point);
+        self.recorders.get_mut(name).unwrap().handle_event_update(quad, event, point);
     }
 
     fn handle_event_end(
@@ -105,7 +105,7 @@ impl TimeshiftManager {
         event: EitEvent,
         point: TimeshiftPoint,
     ) {
-        self.records.get_mut(name).unwrap().handle_event_end(quad, event, point);
+        self.recorders.get_mut(name).unwrap().handle_event_end(quad, event, point);
     }
 
     async fn activate_recorders(
@@ -197,12 +197,8 @@ impl TimeshiftManager {
             drop(stop_trigger);  // TODO: stop_trigger
         });
 
-        Ok(TimeshiftRecorder {
-            name: name.to_string(),
-            config: timeshift_config.clone(),
-            channel,
-            // TODO: stop_trigger
-        })
+        // TODO: stop_trigger
+        Ok(TimeshiftRecorder::new(name.to_string(), timeshift_config.clone(), channel))
     }
 
     async fn forward_messages<T: AsyncRead + Unpin>(
@@ -231,10 +227,7 @@ impl Actor for TimeshiftManager {
             .then(|recorders, actor, _ctx| {
                 for recorder in recorders.into_iter() {
                     let name = recorder.name.clone();
-                    let record = TimeshiftRecord::new(
-                        recorder.name, recorder.config, recorder.channel);
-                    // TODO: copy stop_triggers
-                    actor.records.insert(name, record);
+                    actor.recorders.insert(name, recorder);
                 }
                 actix::fut::ready(())
             })
@@ -247,12 +240,68 @@ impl Actor for TimeshiftManager {
 }
 
 #[derive(Message)]
-#[rtype(result = "Result<Vec<TimeshiftRecordModel>, Error>")]
-pub struct QueryTimeshiftRecordsMessage;
+#[rtype(result = "Result<Vec<TimeshiftRecorderModel>, Error>")]
+pub struct QueryTimeshiftRecordersMessage;
+
+impl fmt::Display for QueryTimeshiftRecordersMessage {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "QueryTimeshiftRecorders")
+    }
+}
+
+impl Handler<QueryTimeshiftRecordersMessage> for TimeshiftManager {
+    type Result = MessageResult<QueryTimeshiftRecordersMessage>;
+
+    fn handle(
+        &mut self,
+        msg: QueryTimeshiftRecordersMessage,
+        _: &mut Self::Context,
+    ) -> Self::Result {
+        log::debug!("{}", msg);
+        let models: Vec<TimeshiftRecorderModel> = self.recorders.values()
+            .map(|record| record.get_model())
+            .collect();
+        MessageResult(Ok(models))
+    }
+}
+
+#[derive(Message)]
+#[rtype(result = "Result<TimeshiftRecorderModel, Error>")]
+pub struct QueryTimeshiftRecorderMessage {
+    pub name: String,
+}
+
+impl fmt::Display for QueryTimeshiftRecorderMessage {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "QueryTimeshiftRecorder for {}", self.name)
+    }
+}
+
+impl Handler<QueryTimeshiftRecorderMessage> for TimeshiftManager {
+    type Result = MessageResult<QueryTimeshiftRecorderMessage>;
+
+    fn handle(
+        &mut self,
+        msg: QueryTimeshiftRecorderMessage,
+        _: &mut Self::Context,
+    ) -> Self::Result {
+        log::debug!("{}", msg);
+        let result = self.recorders.get(&msg.name)
+            .map(|recorder| recorder.get_model())
+            .ok_or(Error::RecordNotFound);
+        MessageResult(result)
+    }
+}
+
+#[derive(Message)]
+#[rtype(result = "Result<Vec<EpgProgram>, Error>")]
+pub struct QueryTimeshiftRecordsMessage {
+    pub recorder_name: String,
+}
 
 impl fmt::Display for QueryTimeshiftRecordsMessage {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "QueryTimeshiftRecords")
+        write!(f, "QueryTimeshiftRecords in {}", self.recorder_name)
     }
 }
 
@@ -265,66 +314,10 @@ impl Handler<QueryTimeshiftRecordsMessage> for TimeshiftManager {
         _: &mut Self::Context,
     ) -> Self::Result {
         log::debug!("{}", msg);
-        let models: Vec<TimeshiftRecordModel> = self.records.values()
-            .map(|record| record.get_model())
-            .collect();
-        MessageResult(Ok(models))
-    }
-}
-
-#[derive(Message)]
-#[rtype(result = "Result<TimeshiftRecordModel, Error>")]
-pub struct QueryTimeshiftRecordMessage {
-    pub record: String,
-}
-
-impl fmt::Display for QueryTimeshiftRecordMessage {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "QueryTimeshiftRecord for {}", self.record)
-    }
-}
-
-impl Handler<QueryTimeshiftRecordMessage> for TimeshiftManager {
-    type Result = MessageResult<QueryTimeshiftRecordMessage>;
-
-    fn handle(
-        &mut self,
-        msg: QueryTimeshiftRecordMessage,
-        _: &mut Self::Context,
-    ) -> Self::Result {
-        log::debug!("{}", msg);
-        let result = self.records.get(&msg.record)
-            .map(|record| record.get_model())
-            .ok_or(Error::RecordNotFound);
-        MessageResult(result)
-    }
-}
-
-#[derive(Message)]
-#[rtype(result = "Result<Vec<EpgProgram>, Error>")]
-pub struct QueryTimeshiftProgramsMessage {
-    pub record: String,
-}
-
-impl fmt::Display for QueryTimeshiftProgramsMessage {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "QueryTimeshiftPrograms for {}", self.record)
-    }
-}
-
-impl Handler<QueryTimeshiftProgramsMessage> for TimeshiftManager {
-    type Result = MessageResult<QueryTimeshiftProgramsMessage>;
-
-    fn handle(
-        &mut self,
-        msg: QueryTimeshiftProgramsMessage,
-        _: &mut Self::Context,
-    ) -> Self::Result {
-        log::debug!("{}", msg);
-        let result = self.records.get(&msg.record)
-            .map(|record| {
-                record.programs.iter()
-                    .map(|program| program.epg.clone())
+        let result = self.recorders.get(&msg.recorder_name)
+            .map(|recorder| {
+                recorder.records.iter()
+                    .map(|record| record.program.clone())
                     .collect::<Vec<EpgProgram>>()
             })
             .ok_or(Error::RecordNotFound);
@@ -333,32 +326,33 @@ impl Handler<QueryTimeshiftProgramsMessage> for TimeshiftManager {
 }
 
 #[derive(Message)]
-#[rtype(result = "Result<TimeshiftLiveStream, Error>")]
-pub struct StartTimeshiftLiveStreamingMessage {
-    pub record: String,
-    pub program: Option<MirakurunProgramId>,
+#[rtype(result = "Result<TimeshiftStream, Error>")]
+pub struct StartTimeshiftStreamingMessage {
+    pub recorder_name: String,
+    pub record_id: Option<MirakurunProgramId>,
 }
 
-impl fmt::Display for StartTimeshiftLiveStreamingMessage {
+impl fmt::Display for StartTimeshiftStreamingMessage {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if let Some(id) = self.program {
-            write!(f, "StartTimeshiftLiveStreaming for {} from program#{}", self.record, id)
+        if let Some(id) = self.record_id {
+            write!(f, "StartTimeshiftStreaming for Record#{} in {}",
+                   id, self.recorder_name)
         } else {
-            write!(f, "StartTimeshiftLiveStreaming for {}", self.record)
+            write!(f, "StartTimeshiftStreaming for {}", self.recorder_name)
         }
     }
 }
 
-impl Handler<StartTimeshiftLiveStreamingMessage> for TimeshiftManager {
-    type Result = ResponseFuture<Result<TimeshiftLiveStream, Error>>;
+impl Handler<StartTimeshiftStreamingMessage> for TimeshiftManager {
+    type Result = ResponseFuture<Result<TimeshiftStream, Error>>;
 
     fn handle(
         &mut self,
-        msg: StartTimeshiftLiveStreamingMessage,
+        msg: StartTimeshiftStreamingMessage,
         _: &mut Self::Context,
     ) -> Self::Result {
         log::debug!("{}", msg);
-        let src = self.create_live_stream_source(&msg.record, msg.program);
+        let src = self.create_live_stream_source(&msg.recorder_name, msg.record_id);
         Box::pin(async move {
             src?.create_stream().await
         })
@@ -366,29 +360,29 @@ impl Handler<StartTimeshiftLiveStreamingMessage> for TimeshiftManager {
 }
 
 #[derive(Message)]
-#[rtype(result = "Result<TimeshiftOnDemandStream, Error>")]
-pub struct StartTimeshiftOnDemandStreamingMessage {
-    pub record: String,
-    pub program: MirakurunProgramId,
+#[rtype(result = "Result<TimeshiftRecordStream, Error>")]
+pub struct StartTimeshiftRecordStreamingMessage {
+    pub recorder_name: String,
+    pub record_id: MirakurunProgramId,
 }
 
-impl fmt::Display for StartTimeshiftOnDemandStreamingMessage {
+impl fmt::Display for StartTimeshiftRecordStreamingMessage {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "StartTimeshiftOnDemandStreaming for {} from program#{}",
-               self.record, self.program)
+        write!(f, "StartTimeshiftRecordStreaming for Record#{} in {}",
+               self.record_id, self.recorder_name)
     }
 }
 
-impl Handler<StartTimeshiftOnDemandStreamingMessage> for TimeshiftManager {
-    type Result = ResponseFuture<Result<TimeshiftOnDemandStream, Error>>;
+impl Handler<StartTimeshiftRecordStreamingMessage> for TimeshiftManager {
+    type Result = ResponseFuture<Result<TimeshiftRecordStream, Error>>;
 
     fn handle(
         &mut self,
-        msg: StartTimeshiftOnDemandStreamingMessage,
+        msg: StartTimeshiftRecordStreamingMessage,
         _: &mut Self::Context,
     ) -> Self::Result {
         log::debug!("{}", msg);
-        let src = self.create_on_demand_stream_source(&msg.record, msg.program);
+        let src = self.create_on_demand_stream_source(&msg.recorder_name, msg.record_id);
         Box::pin(async move {
             src?.create_stream().await
         })
@@ -456,25 +450,19 @@ struct TimeshiftRecorder {
     name: String,
     config: TimeshiftConfig,
     channel: EpgChannel,
-}
-
-struct TimeshiftRecord {
-    name: String,
-    config: TimeshiftConfig,
-    channel: EpgChannel,
-    programs: Vec<TimeshiftProgram>,
+    records: Vec<TimeshiftRecord>,
     points: Vec<TimeshiftPoint>,
     recording: bool,
 }
 
-impl TimeshiftRecord {
+impl TimeshiftRecorder {
     fn new(name: String, config: TimeshiftConfig, channel: EpgChannel) -> Self {
         let max_chunks = config.max_chunks();
-        TimeshiftRecord {
+        TimeshiftRecorder {
             name,
             config,
             channel,
-            programs: Vec::new(),
+            records: Vec::new(),
             points: Vec::with_capacity(max_chunks),
             recording: false,
         }
@@ -483,45 +471,45 @@ impl TimeshiftRecord {
     fn create_live_stream_source(
         &self,
         program_id: Option<MirakurunProgramId>,
-    ) -> Result<TimeshiftLiveStreamSource, Error> {
+    ) -> Result<TimeshiftStreamSource, Error> {
         if self.points.len() < 2 {
             return Err(Error::RecordNotFound)
         }
         let name = self.name.clone();
         let file = self.config.file.clone();
         let point = if let Some(id) = program_id {
-            self.programs.iter()
-                .find(|program| id == program.epg.quad.into())
+            self.records.iter()
+                .find(|record| id == record.program.quad.into())
                 .ok_or(Error::ProgramNotFound)?
                 .start
                 .clone()
         } else {
             self.points[0].clone()
         };
-        Ok(TimeshiftLiveStreamSource { name, file, point })
+        Ok(TimeshiftStreamSource { name, file, point })
     }
 
     fn create_on_demand_stream_source(
         &self,
         program_id: MirakurunProgramId,
-    ) -> Result<TimeshiftOnDemandStreamSource, Error> {
+    ) -> Result<TimeshiftRecordStreamSource, Error> {
         if self.points.len() < 2 {
             return Err(Error::RecordNotFound)
         }
         let name = self.name.clone();
         let file = self.config.file.clone();
-        let program = self.programs.iter()
-                .find(|program| program_id == program.epg.quad.into())
+        let record = self.records.iter()
+                .find(|record| program_id == record.program.quad.into())
                 .ok_or(Error::ProgramNotFound)?;
-        let start = program.start.clone();
-        let end = program.end.clone();
+        let start = record.start.clone();
+        let end = record.end.clone();
         let size = if end.pos > start.pos {
             end.pos - start.pos
         } else {
             assert!(end.pos < start.pos);
             self.config.max_file_size() - start.pos + end.pos
         };
-        Ok(TimeshiftOnDemandStreamSource { name, file, start, end, size })
+        Ok(TimeshiftRecordStreamSource { name, file, start, end, size })
     }
 
     fn start_recording(&mut self) {
@@ -547,7 +535,7 @@ impl TimeshiftRecord {
             return;
         }
         self.invalidate_first_chunk();
-        self.purge_expired_programs();
+        self.purge_expired_records();
     }
 
     fn invalidate_first_chunk(&mut self) {
@@ -557,15 +545,15 @@ impl TimeshiftRecord {
         log::debug!("{}: Chunk#{}: Invalidated", self.name, index);
     }
 
-    fn purge_expired_programs(&mut self) {
+    fn purge_expired_records(&mut self) {
         assert!(!self.points.is_empty());
         let timestamp = self.points[0].timestamp;  // timestamp of the first chunk
-        let n = self.programs.iter()
-            .position(|program| program.end.timestamp > timestamp)
-            .unwrap_or(self.programs.len());
-        for program in self.programs.drain(0..n) {  // remove first n programs
-            log::info!("{}: Program#{}: Purged: {}",
-                       self.name, program.epg.quad, program.epg.name());
+        let n = self.records.iter()
+            .position(|record| record.end.timestamp > timestamp)
+            .unwrap_or(self.records.len());
+        for record in self.records.drain(0..n) {  // remove first n records
+            log::info!("{}: Record#{}: Purged: {}",
+                       self.name, record.program.quad, record.program.name());
         }
     }
 
@@ -583,11 +571,11 @@ impl TimeshiftRecord {
         event: EitEvent,
         point: TimeshiftPoint,
     ) {
-        let mut epg = EpgProgram::new(quad);
-        epg.update(&event);
-        log::info!("{}: Program#{}: Started: {}: {}", self.name, quad, point, epg.name());
-        self.programs.push(TimeshiftProgram {
-            epg,
+        let mut program = EpgProgram::new(quad);
+        program.update(&event);
+        log::info!("{}: Record#{}: Started: {}: {}", self.name, quad, point, program.name());
+        self.records.push(TimeshiftRecord {
+            program,
             start: point.clone(),
             end: point.clone(),
         });
@@ -599,10 +587,10 @@ impl TimeshiftRecord {
         event: EitEvent,
         point: TimeshiftPoint,
     ) {
-        let mut epg = EpgProgram::new(quad);
-        epg.update(&event);
-        log::debug!("{}: Program#{}: Updated: {}: {}", self.name, quad, point, epg.name());
-        self.update_last_program(epg, point);
+        let mut program = EpgProgram::new(quad);
+        program.update(&event);
+        log::debug!("{}: Record#{}: Updated: {}: {}", self.name, quad, point, program.name());
+        self.update_last_record(program, point);
     }
 
     fn handle_event_end(
@@ -611,27 +599,27 @@ impl TimeshiftRecord {
         event: EitEvent,
         point: TimeshiftPoint,
     ) {
-        let mut epg = EpgProgram::new(quad);
-        epg.update(&event);
-        log::info!("{}: Program#{}: Ended: {}: {}", self.name, quad, point, epg.name());
-        self.update_last_program(epg, point);
+        let mut program = EpgProgram::new(quad);
+        program.update(&event);
+        log::info!("{}: Record#{}: Ended: {}: {}", self.name, quad, point, program.name());
+        self.update_last_record(program, point);
     }
 
-    fn update_last_program(
+    fn update_last_record(
         &mut self,
-        epg: EpgProgram,
+        program: EpgProgram,
         point: TimeshiftPoint,
     ) {
-        let last = self.programs.iter_mut()
+        let last = self.records.iter_mut()
             .last()
-            .filter(|program| program.epg.quad == epg.quad);
-        if let Some(mut program) = last {
-            program.epg = epg;
-            program.end = point;
+            .filter(|record| record.program.quad == program.quad);
+        if let Some(mut record) = last {
+            record.program = program;
+            record.end = point;
         }
     }
 
-    fn get_model(&self) -> TimeshiftRecordModel {
+    fn get_model(&self) -> TimeshiftRecorderModel {
         let now = Jst::now();
         let start_time = if let Some(point) = self.points.iter().next() {
             point.timestamp.clone()
@@ -643,7 +631,7 @@ impl TimeshiftRecord {
         } else {
             now.clone()
         };
-        TimeshiftRecordModel {
+        TimeshiftRecorderModel {
             name: self.name.clone(),
             start_time,
             duration: end_time - start_time,
@@ -699,23 +687,23 @@ impl fmt::Display for TimeshiftPoint {
 }
 
 #[derive(Clone)]
-struct TimeshiftProgram {
-    epg: EpgProgram,
+struct TimeshiftRecord {
+    program: EpgProgram,
     start: TimeshiftPoint,
     end: TimeshiftPoint,
 }
 
-struct TimeshiftLiveStreamSource {
+struct TimeshiftStreamSource {
     name: String,
     file: String,
     point: TimeshiftPoint,
 }
 
-impl TimeshiftLiveStreamSource {
+impl TimeshiftStreamSource {
     // 32 KiB, large enough for 10 ms buffering.
     const CHUNK_SIZE: usize = 4096 * 8;
 
-    async fn create_stream(self) -> Result<TimeshiftLiveStream, Error> {
+    async fn create_stream(self) -> Result<TimeshiftStream, Error> {
         log::debug!("{}: Start live streaming from {}", self.name, self.point);
         let mut file = TimeshiftFile::open(&self.file).await?;
         file.set_position(self.point.pos).await?;
@@ -724,7 +712,7 @@ impl TimeshiftLiveStreamSource {
     }
 }
 
-struct TimeshiftOnDemandStreamSource {
+struct TimeshiftRecordStreamSource {
     name: String,
     file: String,
     start: TimeshiftPoint,
@@ -732,11 +720,11 @@ struct TimeshiftOnDemandStreamSource {
     size: u64,
 }
 
-impl TimeshiftOnDemandStreamSource {
+impl TimeshiftRecordStreamSource {
     // 32 KiB, large enough for 10 ms buffering.
     const CHUNK_SIZE: usize = 4096 * 8;
 
-    async fn create_stream(self) -> Result<TimeshiftOnDemandStream, Error> {
+    async fn create_stream(self) -> Result<TimeshiftRecordStream, Error> {
         log::debug!("{}: Start on-demand streaming from {} to {}",
                     self.name, self.start, self.end);
         let mut file = TimeshiftFile::open(&self.file).await?;
@@ -747,7 +735,7 @@ impl TimeshiftOnDemandStreamSource {
     }
 }
 
-pub struct TimeshiftFile{
+pub struct TimeshiftFile {
     state: TimeshiftFileState,
     path: String,
     file: File,
@@ -834,14 +822,14 @@ mod tests {
     use crate::datetime_ext::Jst;
 
     #[test]
-    fn test_timeshift_record_purge_expired_programs() {
-        let mut record = TimeshiftRecord {
+    fn test_timeshift_record_purge_expired_records() {
+        let mut recorder = TimeshiftRecorder {
             name: "record".to_string(),
             config: create_config(),
             channel: create_epg_channel(),
-            programs: vec![
-                TimeshiftProgram {
-                    epg: EpgProgram::new((0, 0, 0, 1).into()),
+            records: vec![
+                TimeshiftRecord {
+                    program: EpgProgram::new((0, 0, 0, 1).into()),
                     start: TimeshiftPoint {
                         timestamp: Jst.ymd(2021, 1, 1).and_hms(0, 0, 0),
                         pos: 0,
@@ -860,16 +848,16 @@ mod tests {
             ],
             recording: true,
         };
-        record.purge_expired_programs();
-        assert!(record.programs.is_empty());
+        recorder.purge_expired_records();
+        assert!(recorder.records.is_empty());
 
-        let mut record = TimeshiftRecord {
-            name: "record".to_string(),
+        let mut recorder = TimeshiftRecorder {
+            name: "recorder".to_string(),
             config: create_config(),
             channel: create_epg_channel(),
-            programs: vec![
-                TimeshiftProgram {
-                    epg: EpgProgram::new((0, 0, 0, 1).into()),
+            records: vec![
+                TimeshiftRecord {
+                    program: EpgProgram::new((0, 0, 0, 1).into()),
                     start: TimeshiftPoint {
                         timestamp: Jst.ymd(2021, 1, 1).and_hms(0, 0, 0),
                         pos: 0,
@@ -879,8 +867,8 @@ mod tests {
                         pos: 0,
                     },
                 },
-                TimeshiftProgram {
-                    epg: EpgProgram::new((0, 0, 0, 2).into()),
+                TimeshiftRecord {
+                    program: EpgProgram::new((0, 0, 0, 2).into()),
                     start: TimeshiftPoint {
                         timestamp: Jst.ymd(2021, 1, 1).and_hms(0, 0, 0),
                         pos: 0,
@@ -890,8 +878,8 @@ mod tests {
                         pos: 0,
                     },
                 },
-                TimeshiftProgram {
-                    epg: EpgProgram::new((0, 0, 0, 3).into()),
+                TimeshiftRecord {
+                    program: EpgProgram::new((0, 0, 0, 3).into()),
                     start: TimeshiftPoint {
                         timestamp: Jst.ymd(2021, 1, 1).and_hms(0, 0, 0),
                         pos: 0,
@@ -910,9 +898,9 @@ mod tests {
             ],
             recording: true,
         };
-        record.purge_expired_programs();
-        assert_eq!(record.programs.len(), 1);
-        assert_eq!(record.programs[0].epg.quad, (0, 0, 0, 3).into());
+        recorder.purge_expired_records();
+        assert_eq!(recorder.records.len(), 1);
+        assert_eq!(recorder.records[0].program.quad, (0, 0, 0, 3).into());
     }
 
     fn create_config() -> TimeshiftConfig {
