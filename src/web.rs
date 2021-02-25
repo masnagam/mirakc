@@ -185,6 +185,7 @@ fn create_api_service() -> impl actix_web::dev::HttpServiceFactory {
         .service(get_timeshift_recorders)
         .service(get_timeshift_recorder)
         .service(get_timeshift_records)
+        .service(get_timeshift_record)
         .service(get_timeshift_stream)
         .service(get_timeshift_record_stream)
         .service(get_iptv_playlist)
@@ -458,6 +459,18 @@ async fn get_timeshift_records(
         recorder_name: path.recorder.clone(),
     }).await?
         .map(|records| actix_web::HttpResponse::Ok().json(records))
+}
+
+#[actix_web::get("/timeshift/{recorder}/records/{record}")]
+async fn get_timeshift_record(
+    timeshift_manager: actix_web::web::Data<Addr<TimeshiftManagerActor>>,
+    path: actix_web::web::Path<TimeshiftRecordPath>,
+) -> ApiResult {
+    timeshift_manager.send(QueryTimeshiftRecordMessage {
+        recorder_name: path.recorder.clone(),
+        record_id: path.record,
+    }).await?
+        .map(|record| actix_web::HttpResponse::Ok().json(record))
 }
 
 #[actix_web::get("/timeshift/{recorder}/stream")]
@@ -1324,6 +1337,15 @@ mod tests {
     }
 
     #[actix_rt::test]
+    async fn test_get_timeshift_record() {
+        let res = get("/api/timeshift/test/records/0").await;
+        assert!(res.status() == actix_web::http::StatusCode::OK);
+
+        let res = get("/api/timeshift/test/records/1").await;
+        assert!(res.status() == actix_web::http::StatusCode::NOT_FOUND);
+    }
+
+    #[actix_rt::test]
     async fn test_get_timeshift_stream() {
         // TODO
 
@@ -1646,6 +1668,19 @@ mod tests {
             } else if let Some(_) = msg.downcast_ref::<QueryTimeshiftRecordsMessage>() {
                 Box::<Option<Result<Vec<TimeshiftRecordModel>, Error>>>::new(
                     Some(Ok(Vec::new())))
+            } else if let Some(msg) = msg.downcast_ref::<QueryTimeshiftRecordMessage>() {
+                let result = if msg.record_id.value() == 0 {
+                    Ok(TimeshiftRecordModel {
+                        id: 0.into(),
+                        program: EpgProgram::new((0, 0, 0, 0).into()).into(),
+                        start_time: Jst::now(),
+                        duration: chrono::Duration::seconds(1),
+                        size: 0,
+                    })
+                } else {
+                    Err(Error::RecordNotFound)
+                };
+                Box::<Option<Result<_, Error>>>::new(Some(result))
             } else {
                 unimplemented!();
             }

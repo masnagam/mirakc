@@ -326,6 +326,43 @@ impl Handler<QueryTimeshiftRecordsMessage> for TimeshiftManager {
     }
 }
 
+
+#[derive(Message)]
+#[rtype(result = "Result<TimeshiftRecordModel, Error>")]
+pub struct QueryTimeshiftRecordMessage {
+    pub recorder_name: String,
+    pub record_id: TimeshiftRecordId,
+}
+
+impl fmt::Display for QueryTimeshiftRecordMessage {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "QueryTimeshiftRecord for Record#{} in {}",
+               self.record_id, self.recorder_name)
+    }
+}
+
+impl Handler<QueryTimeshiftRecordMessage> for TimeshiftManager {
+    type Result = MessageResult<QueryTimeshiftRecordMessage>;
+
+    fn handle(
+        &mut self,
+        msg: QueryTimeshiftRecordMessage,
+        _: &mut Self::Context,
+    ) -> Self::Result {
+        log::debug!("{}", msg);
+        let result = self.recorders.get(&msg.recorder_name)
+            .iter()
+            .flat_map(|recorder| {
+                recorder.records
+                    .get(&msg.record_id)
+                    .map(|record| record.get_model(&recorder.config))
+            })
+            .next()
+            .ok_or(Error::RecordNotFound);
+        MessageResult(result)
+    }
+}
+
 #[derive(Message)]
 #[rtype(result = "Result<TimeshiftStream, Error>")]
 pub struct StartTimeshiftStreamingMessage {
@@ -844,7 +881,7 @@ mod tests {
             name: "record".to_string(),
             config: create_config(),
             channel: create_epg_channel(),
-            records: indexmap!{
+            records: indexmap::indexmap!{
                 0.into() => TimeshiftRecord {
                     id: 0.into(),
                     program: EpgProgram::new((0, 0, 0, 1).into()),
@@ -874,7 +911,7 @@ mod tests {
             name: "recorder".to_string(),
             config: create_config(),
             channel: create_epg_channel(),
-            records: indexmap!{
+            records: indexmap::indexmap!{
                 0.into() => TimeshiftRecord {
                     id: 0.into(),
                     program: EpgProgram::new((0, 0, 0, 1).into()),

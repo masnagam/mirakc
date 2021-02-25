@@ -23,6 +23,7 @@ Web API endpoints listed below have been implemented at this moment:
 | [/api/timeshift]                                |                            |
 | [/api/timeshift/{recorder}]                     |                            |
 | [/api/timeshift/{recorder}/records]             |                            |
+| [/api/timeshift/{recorder}/records/{record}]    |                            |
 | [/api/timeshift/{recorder}/stream]              |                            |
 | [/api/timeshift/{recorder}/records/{record}/stream]|                         |
 
@@ -45,7 +46,8 @@ Web API endpoints listed below have been implemented as the mirakc extensions:
 * [/api/iptv/playlist]
 * [/api/timeshift]
 * [/api/timeshift/{recorder}]
-* [/api/timeshift/{recorder}/programs]
+* [/api/timeshift/{recorder}/records]
+* [/api/timeshift/{recorder}/records/{record}]
 * [/api/timeshift/{recorder}/stream]
 * [/api/timeshift/{recorder}/records/{record}/stream]
 
@@ -66,7 +68,8 @@ Web API endpoints listed below have been implemented as the mirakc extensions:
 [/api/iptv/epg]: #apiiptvepg
 [/api/timeshift]: #apitimeshift
 [/api/timeshift/{recorder}]: #apitimeshiftrecorder
-[/api/timeshift/{recorder}/programs]: #apitimeshiftrecorderprograms
+[/api/timeshift/{recorder}/records]: #apitimeshiftrecorderrecords
+[/api/timeshift/{recorder}/records/{record}]: #apitimeshiftrecorderrecordsrecord
 [/api/timeshift/{recorder}/stream]: #apitimeshiftrecorderstream
 [/api/timeshift/{recorder}/records/{record}/stream]: #apitimeshiftrecorderrecordsrecordstream
 
@@ -216,6 +219,10 @@ Returns a timeshift recorder.
 ### /api/timeshift/{recorder}/records
 
 Returns a list of records in a timeshift recorder.
+
+### /api/timeshift/{recorder}/records/{record}
+
+Returns a records in a timeshift recorder.
 
 ### /api/timeshift/{recorder}/stream
 
