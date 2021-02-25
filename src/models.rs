@@ -318,6 +318,28 @@ impl fmt::Display for TunerUser {
     }
 }
 
+#[derive(Clone, Copy, Hash, Eq, PartialEq)]
+#[derive(Deserialize, Serialize)]
+pub struct TimeshiftRecordId(usize);
+
+impl TimeshiftRecordId {
+    pub fn value(&self) -> usize {
+        self.0
+    }
+}
+
+impl fmt::Display for TimeshiftRecordId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.value())
+    }
+}
+
+impl From<usize> for TimeshiftRecordId {
+    fn from(value: usize) -> Self {
+        TimeshiftRecordId(value)
+    }
+}
+
 // Mirakurun-compatible models
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -677,6 +699,7 @@ pub struct TimeshiftRecorderModel {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TimeshiftRecordModel {
+    pub id: TimeshiftRecordId,
     pub program: MirakurunProgram,
     pub start_time: DateTime<Jst>,
     #[serde(with = "serde_duration_in_millis")]

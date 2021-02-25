@@ -7,6 +7,7 @@ use std::task::{Context, Poll};
 
 use actix::prelude::*;
 use chrono::DateTime;
+use indexmap::IndexMap;
 use serde::Deserialize;
 use tokio::prelude::*;
 use tokio::io::{AsyncSeek, BufReader, SeekFrom, Take};
@@ -51,19 +52,19 @@ impl TimeshiftManager {
     fn create_live_stream_source(
         &self,
         recorder_name: &str,
-        record_id: Option<MirakurunProgramId>,
+        record_id: Option<TimeshiftRecordId>,
     ) -> Result<TimeshiftStreamSource, Error> {
         let recorder = self.recorders.get(recorder_name).ok_or(Error::RecordNotFound)?;
         recorder.create_live_stream_source(record_id)
     }
 
-    fn create_on_demand_stream_source(
+    fn create_record_stream_source(
         &self,
         recorder_name: &str,
-        record_id: MirakurunProgramId,
+        record_id: TimeshiftRecordId,
     ) -> Result<TimeshiftRecordStreamSource, Error> {
         let recorder = self.recorders.get(recorder_name).ok_or(Error::RecordNotFound)?;
-        recorder.create_on_demand_stream_source(record_id)
+        recorder.create_record_stream_source(record_id)
     }
 
     fn start_recording(&mut self, name: &str) {
@@ -316,7 +317,7 @@ impl Handler<QueryTimeshiftRecordsMessage> for TimeshiftManager {
         log::debug!("{}", msg);
         let models = self.recorders.get(&msg.recorder_name)
             .map(|recorder| {
-                recorder.records.iter()
+                recorder.records.values()
                     .map(|record| record.get_model(&recorder.config))
                     .collect::<Vec<TimeshiftRecordModel>>()
             })
@@ -329,7 +330,7 @@ impl Handler<QueryTimeshiftRecordsMessage> for TimeshiftManager {
 #[rtype(result = "Result<TimeshiftStream, Error>")]
 pub struct StartTimeshiftStreamingMessage {
     pub recorder_name: String,
-    pub record_id: Option<MirakurunProgramId>,
+    pub record_id: Option<TimeshiftRecordId>,
 }
 
 impl fmt::Display for StartTimeshiftStreamingMessage {
@@ -363,7 +364,7 @@ impl Handler<StartTimeshiftStreamingMessage> for TimeshiftManager {
 #[rtype(result = "Result<TimeshiftRecordStream, Error>")]
 pub struct StartTimeshiftRecordStreamingMessage {
     pub recorder_name: String,
-    pub record_id: MirakurunProgramId,
+    pub record_id: TimeshiftRecordId,
 }
 
 impl fmt::Display for StartTimeshiftRecordStreamingMessage {
@@ -382,7 +383,7 @@ impl Handler<StartTimeshiftRecordStreamingMessage> for TimeshiftManager {
         _: &mut Self::Context,
     ) -> Self::Result {
         log::debug!("{}", msg);
-        let src = self.create_on_demand_stream_source(&msg.recorder_name, msg.record_id);
+        let src = self.create_record_stream_source(&msg.recorder_name, msg.record_id);
         Box::pin(async move {
             src?.create_stream().await
         })
@@ -450,8 +451,9 @@ struct TimeshiftRecorder {
     name: String,
     config: TimeshiftConfig,
     channel: EpgChannel,
-    records: Vec<TimeshiftRecord>,
+    records: IndexMap<TimeshiftRecordId, TimeshiftRecord>,
     points: Vec<TimeshiftPoint>,
+    next_record_id: usize,
     recording: bool,
 }
 
@@ -462,53 +464,44 @@ impl TimeshiftRecorder {
             name,
             config,
             channel,
-            records: Vec::new(),
+            records: IndexMap::new(),
             points: Vec::with_capacity(max_chunks),
+            next_record_id: 0,
             recording: false,
         }
     }
 
     fn create_live_stream_source(
         &self,
-        program_id: Option<MirakurunProgramId>,
+        record_id: Option<TimeshiftRecordId>,
     ) -> Result<TimeshiftStreamSource, Error> {
         if self.points.len() < 2 {
             return Err(Error::RecordNotFound)
         }
         let name = self.name.clone();
         let file = self.config.file.clone();
-        let point = if let Some(id) = program_id {
-            self.records.iter()
-                .find(|record| id == record.program.quad.into())
-                .ok_or(Error::ProgramNotFound)?
-                .start
-                .clone()
+        let point = if let Some(id) = record_id {
+            let record = self.records.get(&id).ok_or(Error::ProgramNotFound)?;
+            record.start.clone()
         } else {
             self.points[0].clone()
         };
         Ok(TimeshiftStreamSource { name, file, point })
     }
 
-    fn create_on_demand_stream_source(
+    fn create_record_stream_source(
         &self,
-        program_id: MirakurunProgramId,
+        record_id: TimeshiftRecordId,
     ) -> Result<TimeshiftRecordStreamSource, Error> {
         if self.points.len() < 2 {
             return Err(Error::RecordNotFound)
         }
         let name = self.name.clone();
         let file = self.config.file.clone();
-        let record = self.records.iter()
-                .find(|record| program_id == record.program.quad.into())
-                .ok_or(Error::ProgramNotFound)?;
+        let record = self.records.get(&record_id).ok_or(Error::ProgramNotFound)?;
         let start = record.start.clone();
         let end = record.end.clone();
-        let size = if end.pos > start.pos {
-            end.pos - start.pos
-        } else {
-            assert!(end.pos < start.pos);
-            self.config.max_file_size() - start.pos + end.pos
-        };
+        let size = record.get_size(self.config.max_file_size());
         Ok(TimeshiftRecordStreamSource { name, file, start, end, size })
     }
 
@@ -548,12 +541,12 @@ impl TimeshiftRecorder {
     fn purge_expired_records(&mut self) {
         assert!(!self.points.is_empty());
         let timestamp = self.points[0].timestamp;  // timestamp of the first chunk
-        let n = self.records.iter()
+        let n = self.records.values()
             .position(|record| record.end.timestamp > timestamp)
             .unwrap_or(self.records.len());
-        for record in self.records.drain(0..n) {  // remove first n records
+        for (_, record) in self.records.drain(0..n) {  // remove first n records
             log::info!("{}: Record#{}: Purged: {}",
-                       self.name, record.program.quad, record.program.name());
+                       self.name, record.id, record.program.name());
         }
     }
 
@@ -571,10 +564,13 @@ impl TimeshiftRecorder {
         event: EitEvent,
         point: TimeshiftPoint,
     ) {
+        let id = self.next_record_id.into();
+        self.next_record_id += 1;
         let mut program = EpgProgram::new(quad);
         program.update(&event);
-        log::info!("{}: Record#{}: Started: {}: {}", self.name, quad, point, program.name());
-        self.records.push(TimeshiftRecord {
+        log::info!("{}: Record#{}: Started: {}: {}", self.name, id, point, program.name());
+        self.records.insert(id, TimeshiftRecord {
+            id,
             program,
             start: point.clone(),
             end: point.clone(),
@@ -589,8 +585,7 @@ impl TimeshiftRecorder {
     ) {
         let mut program = EpgProgram::new(quad);
         program.update(&event);
-        log::debug!("{}: Record#{}: Updated: {}: {}", self.name, quad, point, program.name());
-        self.update_last_record(program, point);
+        self.update_last_record("Updated", program, point);
     }
 
     fn handle_event_end(
@@ -601,19 +596,20 @@ impl TimeshiftRecorder {
     ) {
         let mut program = EpgProgram::new(quad);
         program.update(&event);
-        log::info!("{}: Record#{}: Ended: {}: {}", self.name, quad, point, program.name());
-        self.update_last_record(program, point);
+        self.update_last_record("Ended", program, point);
     }
 
     fn update_last_record(
         &mut self,
+        action: &str,
         program: EpgProgram,
         point: TimeshiftPoint,
     ) {
-        let last = self.records.iter_mut()
+        let last = self.records.values_mut()
             .last()
             .filter(|record| record.program.quad == program.quad);
         if let Some(mut record) = last {
+            log::debug!("{}: Record#{}: {}: {}: {}", self.name, record.id, action, point, program.name());
             record.program = program;
             record.end = point;
         }
@@ -688,6 +684,7 @@ impl fmt::Display for TimeshiftPoint {
 
 #[derive(Clone)]
 struct TimeshiftRecord {
+    id: TimeshiftRecordId,
     program: EpgProgram,
     start: TimeshiftPoint,
     end: TimeshiftPoint,
@@ -704,6 +701,7 @@ impl TimeshiftRecord {
 
     fn get_model(&self, config: &TimeshiftConfig) -> TimeshiftRecordModel {
         TimeshiftRecordModel {
+            id: self.id,
             program: self.program.clone().into(),
             start_time: self.start.timestamp.clone(),
             duration: self.end.timestamp - self.start.timestamp,
@@ -846,8 +844,9 @@ mod tests {
             name: "record".to_string(),
             config: create_config(),
             channel: create_epg_channel(),
-            records: vec![
-                TimeshiftRecord {
+            records: indexmap!{
+                0.into() => TimeshiftRecord {
+                    id: 0.into(),
                     program: EpgProgram::new((0, 0, 0, 1).into()),
                     start: TimeshiftPoint {
                         timestamp: Jst.ymd(2021, 1, 1).and_hms(0, 0, 0),
@@ -858,13 +857,14 @@ mod tests {
                         pos: 0,
                     },
                 },
-            ],
+            },
             points: vec![
                 TimeshiftPoint {
                     timestamp: Jst.ymd(2021, 1, 1).and_hms(0, 1, 0),
                     pos: 0,
                 },
             ],
+            next_record_id: 0,
             recording: true,
         };
         recorder.purge_expired_records();
@@ -874,8 +874,9 @@ mod tests {
             name: "recorder".to_string(),
             config: create_config(),
             channel: create_epg_channel(),
-            records: vec![
-                TimeshiftRecord {
+            records: indexmap!{
+                0.into() => TimeshiftRecord {
+                    id: 0.into(),
                     program: EpgProgram::new((0, 0, 0, 1).into()),
                     start: TimeshiftPoint {
                         timestamp: Jst.ymd(2021, 1, 1).and_hms(0, 0, 0),
@@ -886,7 +887,8 @@ mod tests {
                         pos: 0,
                     },
                 },
-                TimeshiftRecord {
+                1.into() => TimeshiftRecord {
+                    id: 1.into(),
                     program: EpgProgram::new((0, 0, 0, 2).into()),
                     start: TimeshiftPoint {
                         timestamp: Jst.ymd(2021, 1, 1).and_hms(0, 0, 0),
@@ -897,7 +899,8 @@ mod tests {
                         pos: 0,
                     },
                 },
-                TimeshiftRecord {
+                2.into() => TimeshiftRecord {
+                    id: 2.into(),
                     program: EpgProgram::new((0, 0, 0, 3).into()),
                     start: TimeshiftPoint {
                         timestamp: Jst.ymd(2021, 1, 1).and_hms(0, 0, 0),
@@ -908,13 +911,14 @@ mod tests {
                         pos: 0,
                     },
                 },
-            ],
+            },
             points: vec![
                 TimeshiftPoint {
                     timestamp: Jst.ymd(2021, 1, 1).and_hms(0, 1, 0),
                     pos: 0,
                 },
             ],
+            next_record_id: 0,
             recording: true,
         };
         recorder.purge_expired_records();

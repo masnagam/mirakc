@@ -507,7 +507,7 @@ async fn get_timeshift_record_stream(
 
     let stream = timeshift_manager.send(StartTimeshiftRecordStreamingMessage{
         recorder_name: path.recorder.clone(),
-        record_id: path.record.clone(),
+        record_id: path.record,
     }).await??;
 
     streaming(&config, user, stream, filters, content_type, ()).await
@@ -820,13 +820,13 @@ struct TimeshiftRecorderPath {
 #[derive(Deserialize)]
 struct TimeshiftRecordPath {
     recorder: String,
-    record: MirakurunProgramId,
+    record: TimeshiftRecordId,
 }
 
 #[derive(Deserialize)]
 struct TimeshiftStreamQuery {
     #[serde(default)]
-    record: Option<MirakurunProgramId>,
+    record: Option<TimeshiftRecordId>,
 }
 
 // actix-web uses the serde_urlencoded crate for parsing the query in an URL.
