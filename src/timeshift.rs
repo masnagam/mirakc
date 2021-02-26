@@ -179,8 +179,6 @@ impl TimeshiftManager {
 
         actix::spawn(async move {
             let _ = stream.pipe(input).await;
-            drop(pipeline);
-            // TODO: respawn the recorder if it stopped due to an error.
         });
 
         let manager = activation.manager.clone();
@@ -189,11 +187,11 @@ impl TimeshiftManager {
                 Ok(_) => (),
                 Err(err) => log::error!("{}", err),
             }
-            drop(stop_trigger);  // TODO: stop_trigger
+            // TODO: respawn the recorder if it stopped due to an error.
+            drop(pipeline);
         });
 
-        // TODO: stop_trigger
-        Ok(TimeshiftRecorderSession::Active)
+        Ok(TimeshiftRecorderSession::Active(stop_trigger))
     }
 
     async fn forward_messages<T: AsyncRead + Unpin>(
@@ -560,7 +558,7 @@ impl TimeshiftRecorder {
 
     fn is_active(&self) -> bool {
         match self.session {
-            TimeshiftRecorderSession::Active => true,
+            TimeshiftRecorderSession::Active(_) => true,
             _ => false,
         }
     }
@@ -733,7 +731,7 @@ impl TimeshiftRecorder {
 enum TimeshiftRecorderSession {
     Inactive,
     Activating,
-    Active,
+    Active(TunerStreamStopTrigger),
 }
 
 struct TimeshiftActivation {
