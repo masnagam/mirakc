@@ -1715,7 +1715,7 @@ mod tests {
                 Box::<Option<Result<Vec<TimeshiftRecordModel>, Error>>>::new(
                     Some(Ok(Vec::new())))
             } else if let Some(msg) = msg.downcast_ref::<QueryTimeshiftRecordMessage>() {
-                let result = if msg.record_id.value() == 0 {
+                let result = if msg.record_id == 0.into() {
                     Ok(TimeshiftRecordModel {
                         id: 0.into(),
                         program: EpgProgram::new((0, 0, 0, 0).into()).into(),

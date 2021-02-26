@@ -538,7 +538,6 @@ struct TimeshiftRecorder {
     service: EpgService,
     records: IndexMap<TimeshiftRecordId, TimeshiftRecord>,
     points: Vec<TimeshiftPoint>,
-    next_record_id: usize,
     session: TimeshiftRecorderSession,
 }
 
@@ -551,7 +550,6 @@ impl TimeshiftRecorder {
             service,
             records: IndexMap::new(),
             points: Vec::with_capacity(max_chunks),
-            next_record_id: 0,
             session: TimeshiftRecorderSession::Inactive,
         }
     }
@@ -654,8 +652,7 @@ impl TimeshiftRecorder {
         event: EitEvent,
         point: TimeshiftPoint,
     ) {
-        let id = self.next_record_id.into();
-        self.next_record_id += 1;
+        let id = TimeshiftRecordId::from(point.timestamp.timestamp());
         let mut program = EpgProgram::new(quad);
         program.update(&event);
         log::info!("{}: Record#{}: Started: {}: {}", self.name, id, point, program.name());
@@ -1017,7 +1014,6 @@ mod tests {
                     pos: 0,
                 },
             ],
-            next_record_id: 0,
             session: TimeshiftRecorderSession::Inactive,
         };
         recorder.purge_expired_records();
@@ -1074,7 +1070,6 @@ mod tests {
                     pos: 0,
                 },
             ],
-            next_record_id: 0,
             session: TimeshiftRecorderSession::Inactive,
         };
         recorder.purge_expired_records();

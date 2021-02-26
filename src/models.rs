@@ -320,22 +320,16 @@ impl fmt::Display for TunerUser {
 
 #[derive(Clone, Copy, Hash, Eq, PartialEq)]
 #[derive(Deserialize, Serialize)]
-pub struct TimeshiftRecordId(usize);
-
-impl TimeshiftRecordId {
-    pub fn value(&self) -> usize {
-        self.0
-    }
-}
+pub struct TimeshiftRecordId(i64);
 
 impl fmt::Display for TimeshiftRecordId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.value())
+        write!(f, "{}", self.0)
     }
 }
 
-impl From<usize> for TimeshiftRecordId {
-    fn from(value: usize) -> Self {
+impl From<i64> for TimeshiftRecordId {
+    fn from(value: i64) -> Self {
         TimeshiftRecordId(value)
     }
 }
