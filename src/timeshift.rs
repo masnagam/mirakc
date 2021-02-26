@@ -111,75 +111,67 @@ impl TimeshiftManager {
     }
 
     async fn activate_recorders(
-        config: Arc<Config>,
-        tuner_manager: Addr<TunerManager>,
-        manager: Addr<TimeshiftManager>,
-    ) -> Vec<TimeshiftRecorder> {
-        let mut recorders = Vec::new();
-        for name in config.timeshift.keys() {
-            match Self::activate_recorder(name, &config, &tuner_manager, manager.clone()).await {
-                Ok(recorder) => {
-                    log::debug!("Activated a timeshift recorder for {}", name);
-                    recorders.push(recorder);
+        activations: Vec<TimeshiftActivation>,
+    ) -> Vec<(String, TimeshiftRecorderSession)> {
+        let mut results = Vec::new();
+        for activation in activations.into_iter() {
+            match Self::activate_recorder(&activation).await {
+                Ok(session) => {
+                    log::debug!("Activated a timeshift recorder for {}", activation.name);
+                    results.push((activation.name, session));
                 }
                 Err(err) => {
-                    log::error!("Failed to activatea timeshift recorder for {}: {}", name, err);
+                    log::error!("Failed to activate a timeshift recorder for {}: {}",
+                                activation.name, err);
+                    results.push((activation.name, TimeshiftRecorderSession::Inactive));
                 }
             }
         }
-        recorders
+        results
     }
 
     async fn activate_recorder(
-        name: &str,
-        config: &Arc<Config>,
-        tuner_manager: &Addr<TunerManager>,
-        manager: Addr<TimeshiftManager>,
-    ) -> Result<TimeshiftRecorder, Error> {
-        let timeshift_config = config.timeshift.get(name).unwrap();
-
-        let channel = config.channels.iter()
-            .filter(|config| !config.disabled)
-            .find(|config| config.name == timeshift_config.channel)
-            .cloned()
-            .map(EpgChannel::from)
-            .ok_or(Error::ChannelNotFound)?;
+        activation: &TimeshiftActivation,
+    ) -> Result<TimeshiftRecorderSession, Error> {
+        let config = activation.config.timeshift.get(&activation.name).unwrap();
 
         let user = TunerUser {
             info: TunerUserInfo::Recorder {
-                name: format!("timeshift({})", name),
+                name: format!("timeshift({})", activation.name),
             },
-            priority: timeshift_config.priority.into(),
+            priority: config.priority.into(),
         };
 
+        let channel = &activation.service.channel;
         let data = mustache::MapBuilder::new()
             .insert_str("channel_name", &channel.name)
             .insert("channel_type", &channel.channel_type)?
             .insert_str("channel", &channel.channel)
-            .insert("sid", &timeshift_config.sid)?
+            .insert("sid", &activation.service.sid)?
             .build();
         let mut builder = FilterPipelineBuilder::new(data);
-        builder.add_service_filter(&config.filters.service_filter)?;
-        builder.add_decode_filter(&config.filters.decode_filter)?;
+        builder.add_service_filter(&activation.config.filters.service_filter)?;
+        builder.add_decode_filter(&activation.config.filters.decode_filter)?;
         let (mut cmds, _) = builder.build();
 
         let data = mustache::MapBuilder::new()
-            .insert_str("name", name)
-            .insert("sid", &timeshift_config.sid)?
-            .insert_str("file", &timeshift_config.file)
-            .insert("chunk_size", &timeshift_config.chunk_size)?
-            .insert("num_chunks", &timeshift_config.num_chunks)?
+            .insert_str("name", &activation.name)
+            .insert("sid", &activation.service.sid)?
+            .insert_str("file", &config.file)
+            .insert("chunk_size", &config.chunk_size)?
+            .insert("num_chunks", &config.num_chunks)?
             .build();
-        let template = mustache::compile_str(&config.recorder.record_service_command)?;
+        let template = mustache::compile_str(
+            &activation.config.recorder.record_service_command)?;
         cmds.push(template.render_data_to_string(&data)?);
 
-        let stream = tuner_manager.send(StartStreamingMessage {
+        let stream = activation.tuner_manager.send(StartStreamingMessage {
             channel: channel.clone(),
             user,
         }).await??;
 
         let stop_trigger = TunerStreamStopTrigger::new(
-            stream.id(), tuner_manager.clone().recipient());
+            stream.id(), activation.tuner_manager.clone().recipient());
 
         let mut pipeline = spawn_pipeline(cmds, stream.id())?;
 
@@ -191,6 +183,7 @@ impl TimeshiftManager {
             // TODO: respawn the recorder if it stopped due to an error.
         });
 
+        let manager = activation.manager.clone();
         actix::spawn(async move {
             match Self::forward_messages(manager, output).await {
                 Ok(_) => (),
@@ -200,7 +193,7 @@ impl TimeshiftManager {
         });
 
         // TODO: stop_trigger
-        Ok(TimeshiftRecorder::new(name.to_string(), timeshift_config.clone(), channel))
+        Ok(TimeshiftRecorderSession::Active)
     }
 
     async fn forward_messages<T: AsyncRead + Unpin>(
@@ -221,19 +214,8 @@ impl TimeshiftManager {
 impl Actor for TimeshiftManager {
     type Context = actix::Context<Self>;
 
-    fn started(&mut self, ctx: &mut Self::Context) {
+    fn started(&mut self, _: &mut Self::Context) {
         log::debug!("Started");
-        let fut = Self::activate_recorders(
-            self.config.clone(), self.tuner_manager.clone(), ctx.address());
-        actix::fut::wrap_future::<_, Self>(fut)
-            .then(|recorders, actor, _ctx| {
-                for recorder in recorders.into_iter() {
-                    let name = recorder.name.clone();
-                    actor.recorders.insert(name, recorder);
-                }
-                actix::fut::ready(())
-            })
-            .wait(ctx);
     }
 
     fn stopped(&mut self, _: &mut Self::Context) {
@@ -435,6 +417,66 @@ impl Handler<StartTimeshiftRecordStreamingMessage> for TimeshiftManager {
     }
 }
 
+impl fmt::Display for NotifyServicesUpdatedMessage {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "NotifyServicesUpdated")
+    }
+}
+
+impl Handler<NotifyServicesUpdatedMessage> for TimeshiftManager {
+    type Result = ();
+
+    fn handle(
+        &mut self,
+        msg: NotifyServicesUpdatedMessage,
+        ctx: &mut Self::Context,
+    ) -> Self::Result {
+        log::debug!("{}", msg);
+        let mut activations = Vec::new();
+        for (name, config) in self.config.clone().timeshift.iter() {
+            let triple = ServiceTriple::from(config.service_triple.clone());
+            if msg.services.contains_key(&triple) {
+                let service = msg.services[&triple].clone();
+                let mut recorder = self.recorders
+                    .entry(name.clone())
+                    .and_modify(|record| record.service = service.clone())
+                    .or_insert(TimeshiftRecorder::new(
+                        name.clone(), config.clone(), service.clone()));
+                if recorder.is_inactive() {
+                    log::debug!("Activate a timeshift recorder for {}", name);
+                    recorder.session = TimeshiftRecorderSession::Activating;
+                    activations.push(TimeshiftActivation {
+                        config: self.config.clone(),
+                        name: name.clone(),
+                        service: service.clone(),
+                        tuner_manager: self.tuner_manager.clone(),
+                        manager: ctx.address(),
+                    });
+                }
+            } else {
+                if let Some(recorder) = self.recorders.get_mut(name) {
+                    log::warn!("Stop the recorder for {} because service#{} is unavailable",
+                               recorder.name, triple);
+                    recorder.session = TimeshiftRecorderSession::Inactive;
+                }
+            }
+        }
+        let fut = Self::activate_recorders(activations);
+        actix::fut::wrap_future::<_, Self>(fut)
+            .then(|results, manager, _ctx| {
+                for (name, session) in results.into_iter() {
+                    if let Some(recorder) = manager.recorders.get_mut(&name) {
+                        recorder.session = session;
+                    } else {
+                        log::warn!("Xxx {}", name);
+                    }
+                }
+                actix::fut::ready(())
+            })
+            .wait(ctx);
+    }
+}
+
 #[derive(Message)]
 #[rtype(result = "()")]
 #[derive(Deserialize)]
@@ -495,24 +537,38 @@ impl Handler<TimeshiftMessage> for TimeshiftManager {
 struct TimeshiftRecorder {
     name: String,
     config: TimeshiftConfig,
-    channel: EpgChannel,
+    service: EpgService,
     records: IndexMap<TimeshiftRecordId, TimeshiftRecord>,
     points: Vec<TimeshiftPoint>,
     next_record_id: usize,
-    recording: bool,
+    session: TimeshiftRecorderSession,
 }
 
 impl TimeshiftRecorder {
-    fn new(name: String, config: TimeshiftConfig, channel: EpgChannel) -> Self {
+    fn new(name: String, config: TimeshiftConfig, service: EpgService) -> Self {
         let max_chunks = config.max_chunks();
         TimeshiftRecorder {
             name,
             config,
-            channel,
+            service,
             records: IndexMap::new(),
             points: Vec::with_capacity(max_chunks),
             next_record_id: 0,
-            recording: false,
+            session: TimeshiftRecorderSession::Inactive,
+        }
+    }
+
+    fn is_active(&self) -> bool {
+        match self.session {
+            TimeshiftRecorderSession::Active => true,
+            _ => false,
+        }
+    }
+
+    fn is_inactive(&self) -> bool {
+        match self.session {
+            TimeshiftRecorderSession::Inactive => true,
+            _ => false,
         }
     }
 
@@ -544,12 +600,10 @@ impl TimeshiftRecorder {
     }
 
     fn start_recording(&mut self) {
-        self.recording = true;
         log::info!("{}: Started recording", self.name);
     }
 
     fn stop_recording(&mut self, reset: bool) {
-        self.recording = false;
         log::info!("{}: Stopped recording", self.name);
         if reset {
             log::warn!("{}: Reset data", self.name);
@@ -671,9 +725,23 @@ impl TimeshiftRecorder {
             name: self.name.clone(),
             start_time,
             duration: end_time - start_time,
-            recording: self.recording,
+            recording: self.is_active(),
         }
     }
+}
+
+enum TimeshiftRecorderSession {
+    Inactive,
+    Activating,
+    Active,
+}
+
+struct TimeshiftActivation {
+    config: Arc<Config>,
+    name: String,
+    service: EpgService,
+    tuner_manager: Addr<TunerManager>,
+    manager: Addr<TimeshiftManager>,
 }
 
 #[derive(Deserialize)]
@@ -929,7 +997,7 @@ mod tests {
         let mut recorder = TimeshiftRecorder {
             name: "record".to_string(),
             config: create_config(),
-            channel: create_epg_channel(),
+            service: create_epg_service(),
             records: indexmap::indexmap!{
                 0.into() => TimeshiftRecord {
                     id: 0.into(),
@@ -952,7 +1020,7 @@ mod tests {
                 },
             ],
             next_record_id: 0,
-            recording: true,
+            session: TimeshiftRecorderSession::Inactive,
         };
         recorder.purge_expired_records();
         assert!(recorder.records.is_empty());
@@ -960,7 +1028,7 @@ mod tests {
         let mut recorder = TimeshiftRecorder {
             name: "recorder".to_string(),
             config: create_config(),
-            channel: create_epg_channel(),
+            service: create_epg_service(),
             records: indexmap::indexmap!{
                 0.into() => TimeshiftRecord {
                     id: 0.into(),
@@ -1009,7 +1077,7 @@ mod tests {
                 },
             ],
             next_record_id: 0,
-            recording: true,
+            session: TimeshiftRecorderSession::Inactive,
         };
         recorder.purge_expired_records();
         assert_eq!(recorder.records.len(), 1);
@@ -1018,21 +1086,29 @@ mod tests {
 
     fn create_config() -> TimeshiftConfig {
         serde_yaml::from_str::<TimeshiftConfig>(r#"
-          channel: ch
-          sid: 1
+          service-triple: [1, 2, 3]
           file: /path/to/file
           num-chunks: 5
         "#).unwrap()
     }
 
-    fn create_epg_channel() -> EpgChannel {
-        EpgChannel {
-            name: "ch".to_string(),
-            channel_type: ChannelType::GR,
-            channel: "ch".to_string(),
-            extra_args: "".to_string(),
-            services: vec![],
-            excluded_services: vec![],
+    fn create_epg_service() -> EpgService {
+        EpgService {
+            nid: 1.into(),
+            tsid: 2.into(),
+            sid: 3.into(),
+            service_type: 1,
+            logo_id: 0,
+            remote_control_key_id: 0,
+            name: "Service".to_string(),
+            channel:  EpgChannel {
+                name: "ch".to_string(),
+                channel_type: ChannelType::GR,
+                channel: "ch".to_string(),
+                extra_args: "".to_string(),
+                services: vec![],
+                excluded_services: vec![],
+            }
         }
     }
 }

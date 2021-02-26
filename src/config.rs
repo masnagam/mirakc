@@ -8,7 +8,7 @@ use num_cpus;
 use serde::Deserialize;
 use serde_yaml;
 
-use crate::models::{ChannelType, ServiceId, TunerUserPriority};
+use crate::models::*;
 
 pub fn load(config_path: &str) -> Arc<Config> {
     let reader = File::open(config_path)
@@ -330,8 +330,7 @@ pub struct JobConfig {
 #[serde(rename_all = "kebab-case")]
 #[serde(deny_unknown_fields)]
 pub struct TimeshiftConfig {
-    pub channel: String,
-    pub sid: ServiceId,
+    pub service_triple: (NetworkId, TransportStreamId, ServiceId),
     pub file: String,
     #[serde(default = "TimeshiftConfig::default_chunk_size")]
     pub chunk_size: usize,
@@ -355,8 +354,6 @@ impl TimeshiftConfig {
     }
 
     fn validate(&self) {
-        assert!(!self.channel.is_empty(),
-                "config.timeshift[].channel must be a non-empty string.");
         assert!(!self.file.is_empty(),
                 "config.timeshift[].file must be a non-empty path.");
         assert!(self.chunk_size > 0,
@@ -989,8 +986,7 @@ mod tests {
         assert!(serde_yaml::from_str::<TimeshiftConfig>("{}").is_err());
 
         assert!(serde_yaml::from_str::<TimeshiftConfig>(r#"
-            channel: ch
-            sid: 1
+            service-triple: [1, 2, 3]
             file: /path/to/file
             num-chunks: 100
             unknown: property
@@ -998,14 +994,12 @@ mod tests {
 
         assert_eq!(
             serde_yaml::from_str::<TimeshiftConfig>(r#"
-                channel: ch
-                sid: 1
+                service-triple: [1, 2, 3]
                 file: /path/to/file
                 num-chunks: 100
             "#).unwrap(),
             TimeshiftConfig {
-                channel: "ch".to_string(),
-                sid: 1.into(),
+                service_triple: (1.into(), 2.into(), 3.into()),
                 file: "/path/to/file".to_string(),
                 chunk_size: TimeshiftConfig::default_chunk_size(),
                 num_chunks: 100,
@@ -1015,8 +1009,7 @@ mod tests {
 
         assert_eq!(
             serde_yaml::from_str::<TimeshiftConfig>(r#"
-                channel: ch
-                sid: 1
+                service-triple: [1, 2, 3]
                 file: /path/to/file
                 chunk-size: 8192
                 num-chunks: 100
@@ -1024,8 +1017,7 @@ mod tests {
                 priority: 2
             "#).unwrap(),
             TimeshiftConfig {
-                channel: "ch".to_string(),
-                sid: 1.into(),
+                service_triple: (1.into(), 2.into(), 3.into()),
                 file: "/path/to/file".to_string(),
                 chunk_size: 8192,
                 num_chunks: 100,

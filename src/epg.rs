@@ -18,7 +18,10 @@ use crate::eit_feeder::*;
 use crate::error::Error;
 use crate::models::*;
 
-pub fn start(config: Arc<Config>) -> Addr<Epg> {
+pub fn start(
+    config: Arc<Config>,
+    service_recipients: Vec<Recipient<NotifyServicesUpdatedMessage>>,
+) -> Addr<Epg> {
     // Start on a new Arbiter instead of the system Arbiter.
     //
     // Epg performs several blocking processes like blow:
@@ -26,11 +29,12 @@ pub fn start(config: Arc<Config>) -> Addr<Epg> {
     //   * Serialization and deserialization using serde
     //   * Conversions into Mirakurun-compatible models
     //
-    Epg::start_in_arbiter(&Arbiter::new(), |_| Epg::new(config))
+    Epg::start_in_arbiter(&Arbiter::new(), |_| Epg::new(config, service_recipients))
 }
 
 pub struct Epg {
     config: Arc<Config>,
+    service_recipients: Vec<Recipient<NotifyServicesUpdatedMessage>>,
     services: IndexMap<ServiceTriple, EpgService>,  // keeps insertion order
     clocks: HashMap<ServiceTriple, Clock>,
     schedules: HashMap<ServiceTriple, EpgSchedule>,
@@ -43,9 +47,13 @@ pub struct Airtime {
 }
 
 impl Epg {
-    fn new(config: Arc<Config>) -> Self {
+    fn new(
+        config: Arc<Config>,
+        service_recipients: Vec<Recipient<NotifyServicesUpdatedMessage>>,
+    ) -> Self {
         Epg {
             config,
+            service_recipients,
             services: IndexMap::new(),
             clocks: HashMap::new(),
             schedules: HashMap::new(),
@@ -74,6 +82,12 @@ impl Epg {
                     }
                 }
             }
+        }
+
+        for recipient in self.service_recipients.iter() {
+            recipient.do_send(NotifyServicesUpdatedMessage {
+                services: services.clone(),
+            }).unwrap();
         }
 
         self.services = services;
@@ -834,6 +848,14 @@ impl Handler<RemoveAirtimeMessage> for Epg {
     }
 }
 
+// notify services updated
+
+#[derive(Message)]
+#[rtype(result = "()")]
+pub struct NotifyServicesUpdatedMessage {
+    pub services: IndexMap<ServiceTriple, EpgService>,
+}
+
 #[derive(Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct EpgSchedule {
@@ -1204,7 +1226,7 @@ mod tests {
             }
         }
 
-        let mut epg = Epg::new(Arc::new(Default::default()));
+        let mut epg = Epg::new(Arc::new(Default::default()), vec![]);
 
         let ch1 = EpgChannel {
             name: "ch1".to_string(),
@@ -1359,13 +1381,13 @@ mod tests {
         let channel_type = ChannelType::GR;
         let config = Arc::new(Config::default());
 
-        let mut epg = Epg::new(config.clone());
+        let mut epg = Epg::new(config.clone(), vec![]);
         epg.services.insert(triple, create_epg_service(triple, channel_type));
         epg.prepare_schedules(Jst::now());
         assert_eq!(epg.schedules.len(), 1);
         assert_eq!(epg.schedules[&triple].overnight_events.len(), 0);
 
-        let mut epg = Epg::new(config.clone());
+        let mut epg = Epg::new(config.clone(), vec![]);
         epg.services.insert(triple, create_epg_service(triple, channel_type));
         let sched = create_epg_schedule_with_overnight_events(triple);
         epg.schedules.insert(triple, sched);
