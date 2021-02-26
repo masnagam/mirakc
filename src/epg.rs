@@ -1126,6 +1126,7 @@ impl Into<MirakurunChannelService> for EpgService {
         MirakurunChannelService {
             id: self.triple().into(),
             service_id: self.sid,
+            transport_stream_id: self.tsid,
             network_id: self.nid,
             name: self.name,
         }

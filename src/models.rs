@@ -487,6 +487,7 @@ pub struct MirakurunChannel {
 pub struct MirakurunChannelService {
     pub id: MirakurunServiceId,
     pub service_id: ServiceId,
+    pub transport_stream_id: TransportStreamId,  // incompatible with Mirakurun
     pub network_id: NetworkId,
     pub name: String,
 }
@@ -497,6 +498,7 @@ pub struct MirakurunChannelService {
 pub struct MirakurunService {
     pub id: MirakurunServiceId,
     pub service_id: ServiceId,
+    pub transport_stream_id: TransportStreamId,  // incompatible with Mirakurun
     pub network_id: NetworkId,
     #[serde(rename = "type")]
     pub service_type: u16,
@@ -514,6 +516,7 @@ impl From<EpgService> for MirakurunService {
         Self {
             id: (sv.nid, sv.sid).into(),
             service_id: sv.sid,
+            transport_stream_id: sv.tsid,
             network_id: sv.nid,
             service_type: sv.service_type,
             logo_id: sv.logo_id,
@@ -550,6 +553,7 @@ pub struct MirakurunProgram {
     pub id: MirakurunProgramId,
     pub event_id: EventId,
     pub service_id: ServiceId,
+    pub transport_stream_id: TransportStreamId,  // incompatible with Mirakurun
     pub network_id: NetworkId,
     #[serde(with = "serde_jst")]
     pub start_at: DateTime<Jst>,
@@ -576,6 +580,7 @@ impl From<EpgProgram> for MirakurunProgram {
             id: program.quad.into(),
             event_id: program.quad.eid(),
             service_id: program.quad.sid(),
+            transport_stream_id: program.quad.tsid(),
             network_id: program.quad.nid(),
             start_at: program.start_at,
             duration: program.duration,
