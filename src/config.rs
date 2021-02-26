@@ -336,8 +336,8 @@ pub struct TimeshiftConfig {
     #[serde(default = "TimeshiftConfig::default_chunk_size")]
     pub chunk_size: usize,
     pub num_chunks: usize,
-    #[serde(default = "TimeshiftConfig::default_num_gaps")]
-    pub num_gaps: usize,
+    #[serde(default = "TimeshiftConfig::default_num_reserves")]
+    pub num_reserves: usize,
     #[serde(default = "TimeshiftConfig::default_priority")]
     pub priority: i32,
 }
@@ -350,8 +350,8 @@ impl TimeshiftConfig {
     }
 
     pub fn max_chunks(&self) -> usize {
-        assert!(self.num_chunks > self.num_gaps);
-        self.num_chunks - self.num_gaps
+        assert!(self.num_chunks > self.num_reserves);
+        self.num_chunks - self.num_reserves
     }
 
     fn validate(&self) {
@@ -365,10 +365,10 @@ impl TimeshiftConfig {
                 "config.timeshift[].chunk-size must be a multiple of {}.", Self::BUFSIZE);
         assert!(self.num_chunks > 2,
                 "config.timeshift[].num-chunks must be larger than 2.");
-        assert!(self.num_gaps > 0,
-                "config.timeshift[].num-gaps must be larger than 0.");
-        assert!(self.num_chunks - self.num_gaps > 1,
-                "Maximum number of available chunks (num-chunks - num-gaps) \
+        assert!(self.num_reserves > 0,
+                "config.timeshift[].num-reserves must be larger than 0.");
+        assert!(self.num_chunks - self.num_reserves > 1,
+                "Maximum number of available chunks (num-chunks - num-reserves) \
                  must be larger than 1.");
     }
 
@@ -376,7 +376,7 @@ impl TimeshiftConfig {
         Self::BUFSIZE * 20000  // 40K Blocks
     }
 
-    fn default_num_gaps() -> usize {
+    fn default_num_reserves() -> usize {
         1
     }
 
@@ -1009,7 +1009,7 @@ mod tests {
                 file: "/path/to/file".to_string(),
                 chunk_size: TimeshiftConfig::default_chunk_size(),
                 num_chunks: 100,
-                num_gaps: TimeshiftConfig::default_num_gaps(),
+                num_reserves: TimeshiftConfig::default_num_reserves(),
                 priority: TimeshiftConfig::default_priority(),
             });
 
@@ -1020,7 +1020,7 @@ mod tests {
                 file: /path/to/file
                 chunk-size: 8192
                 num-chunks: 100
-                num-gaps: 2
+                num-reserves: 2
                 priority: 2
             "#).unwrap(),
             TimeshiftConfig {
@@ -1029,7 +1029,7 @@ mod tests {
                 file: "/path/to/file".to_string(),
                 chunk_size: 8192,
                 num_chunks: 100,
-                num_gaps: 2,
+                num_reserves: 2,
                 priority: 2.into(),
             });
     }

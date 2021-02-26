@@ -1722,6 +1722,7 @@ mod tests {
                         start_time: Jst::now(),
                         duration: chrono::Duration::seconds(1),
                         size: 0,
+                        recording: true,
                     })
                 } else {
                     Err(Error::RecordNotFound)
