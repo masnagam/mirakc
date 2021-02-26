@@ -39,12 +39,11 @@ suitable for your environment.
 | [jobs.sync-clocks.schedule]      | `'0 3 12 * * * *'` (execute at 12:03 every day) |
 | [jobs.update-schedules.command]  | `mirakc-arib collect-eits{{#sids}} --sids={{{.}}}{{/sids}}{{#xsids}} --xsids={{{.}}}{{/xsids}}` |
 | [jobs.update-schedules.schedule] | `'0 7,37 * * * * *'` (execute at 7 and 37 minutes every hour) |
-| [timeshift\[\].channel]          |                                           |
-| [timeshift\[\].sid]              |                                           |
+| [timeshift\[\].service-triple]   |                                           |
 | [timeshift\[\].file]             |                                           |
 | [timeshift\[\].chunk-size]       | 163840000 (4KiB * 40000 ~ 160MB)          |
 | [timeshift\[\].num-chunks]       |                                           |
-| [timeshift\[\].num-gaps]         | 1                                         |
+| [timeshift\[\].num-reserves]     | 1                                         |
 | [timeshift\[\].priority]         | 128                                       |
 | [resource.strings-yaml]          | `/etc/mirakc/strings.yml`                 |
 | [mirakurun.openapi-json]         | `/etc/mirakurun.openapi.json`             |
@@ -80,12 +79,11 @@ suitable for your environment.
 [jobs.sync-clocks.schedule]: #jobssync-clocks
 [jobs.update-schedules.command]: #jobsupdate-schedules
 [jobs.update-schedules.schedule]: #jobsupdate-schdules
-[timeshift\[\].channel]: #timeshift
-[timeshift\[\].sid]: #timeshift
+[timeshift\[\].service-triple]: #timeshift
 [timeshift\[\].file]: #timeshift
 [timeshift\[\].chunk-size]: #timeshift
 [timeshift\[\].num-chunks]: #timeshift
-[timeshift\[\].num-gaps]: #timeshift
+[timeshift\[\].num-reserves]: #timeshift
 [timeshift\[\].priority]: #timeshift
 [resource.strings-yaml]: #resourcestrings-yaml
 [mirakurun.openapi-json]: #mirakurunopenapi-json
@@ -530,10 +528,8 @@ Command template variables:
 
 Definitions of timeshift recordings.
 
-* channel
-  * A channel name defined in the `channels` definition
-* sid
-  * A SID of a service stream to record
+* service-triple
+  * A tuple of NID, TSID and SID of a service stream to record
 * file
   * A path to a file used as a ring buffer to record the service stream
 * chunk-size
@@ -543,10 +539,10 @@ Definitions of timeshift recordings.
   * The maximum number of chunks in the file
     * The maximum size of the file is computed by `chunk-size * num-chunks`
   * Must be larger than 2
-* num-gaps
+* num-reserves
   * The number of chunks in the gap between the head and the tail of the ring buffer
   * Must be larger than 0
-  * `num-chunks - num-gaps` must be larger than 1
+  * `num-chunks - num-reserves` must be larger than 1
 * priority
   * The priority of streaming
   * Should be larger than 0
@@ -554,8 +550,7 @@ Definitions of timeshift recordings.
 ```yaml
 timeshift:
   bs1:
-    channel: BS1
-    sid: 101
+    service-triple: [4, 16625, 101]  # BS1
     file: /path/to/bs1.timeshift.m2ts
     num-chunks: 4000  # about 640GB
 ```
