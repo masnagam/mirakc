@@ -62,9 +62,10 @@ impl TimeshiftManager {
         &self,
         recorder_name: &str,
         record_id: TimeshiftRecordId,
+        start_pos: Option<u64>,
     ) -> Result<TimeshiftRecordStreamSource, Error> {
         let recorder = self.recorders.get(recorder_name).ok_or(Error::RecordNotFound)?;
-        recorder.create_record_stream_source(record_id)
+        recorder.create_record_stream_source(record_id, start_pos)
     }
 
     fn start_recording(&mut self, name: &str) {
@@ -402,12 +403,18 @@ impl Handler<StartTimeshiftStreamingMessage> for TimeshiftManager {
 pub struct StartTimeshiftRecordStreamingMessage {
     pub recorder_name: String,
     pub record_id: TimeshiftRecordId,
+    pub start_pos: Option<u64>,
 }
 
 impl fmt::Display for StartTimeshiftRecordStreamingMessage {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "StartTimeshiftRecordStreaming for Record#{} in {}",
-               self.record_id, self.recorder_name)
+        if let Some(pos) = self.start_pos {
+            write!(f, "StartTimeshiftRecordStreaming from {} of Record#{} in {}",
+                   pos, self.record_id, self.recorder_name)
+        } else {
+            write!(f, "StartTimeshiftRecordStreaming from the beginning of Record#{} in {}",
+                   self.record_id, self.recorder_name)
+        }
     }
 }
 
@@ -420,7 +427,8 @@ impl Handler<StartTimeshiftRecordStreamingMessage> for TimeshiftManager {
         _: &mut Self::Context,
     ) -> Self::Result {
         log::debug!("{}", msg);
-        let src = self.create_record_stream_source(&msg.recorder_name, msg.record_id);
+        let src = self.create_record_stream_source(
+            &msg.recorder_name, msg.record_id, msg.start_pos);
         Box::pin(async move {
             src?.create_stream().await
         })
@@ -529,17 +537,10 @@ impl TimeshiftRecorder {
     fn create_record_stream_source(
         &self,
         record_id: TimeshiftRecordId,
+        start_pos: Option<u64>,
     ) -> Result<TimeshiftRecordStreamSource, Error> {
-        if self.points.len() < 2 {
-            return Err(Error::RecordNotFound)
-        }
-        let name = self.name.clone();
-        let file = self.config.file.clone();
         let record = self.records.get(&record_id).ok_or(Error::ProgramNotFound)?;
-        let start = record.start.clone();
-        let end = record.end.clone();
-        let size = record.get_size(self.config.max_file_size());
-        Ok(TimeshiftRecordStreamSource { name, file, start, end, size })
+        record.create_record_stream_source(self.name.clone(), &self.config, start_pos)
     }
 
     fn start_recording(&mut self) {
@@ -606,12 +607,7 @@ impl TimeshiftRecorder {
         let mut program = EpgProgram::new(quad);
         program.update(&event);
         log::info!("{}: Record#{}: Started: {}: {}", self.name, id, point, program.name());
-        self.records.insert(id, TimeshiftRecord {
-            id,
-            program,
-            start: point.clone(),
-            end: point.clone(),
-        });
+        self.records.insert(id, TimeshiftRecord::new(id, program, point));
     }
 
     fn handle_event_update(
@@ -622,7 +618,7 @@ impl TimeshiftRecorder {
     ) {
         let mut program = EpgProgram::new(quad);
         program.update(&event);
-        self.update_last_record("Updated", program, point);
+        self.update_last_record(program, point, false);
     }
 
     fn handle_event_end(
@@ -633,22 +629,29 @@ impl TimeshiftRecorder {
     ) {
         let mut program = EpgProgram::new(quad);
         program.update(&event);
-        self.update_last_record("Ended", program, point);
+        self.update_last_record(program, point, true);
     }
 
     fn update_last_record(
         &mut self,
-        action: &str,
         program: EpgProgram,
         point: TimeshiftPoint,
+        end: bool,
     ) {
-        let last = self.records.values_mut()
-            .last()
-            .filter(|record| record.program.quad == program.quad);
-        if let Some(mut record) = last {
-            log::debug!("{}: Record#{}: {}: {}: {}", self.name, record.id, action, point, program.name());
-            record.program = program;
-            record.end = point;
+        match self.records.values_mut().last() {
+            Some(record) => {
+                record.update(program, point, end);
+                if end {
+                    log::debug!("{}: Record#{}: Ended: {}: {}",
+                                self.name, record.id, record.end, record.program.name());
+                } else {
+                    log::debug!("{}: Record#{}: Updated: {}: {}",
+                                self.name, record.id, record.end, record.program.name());
+                }
+            }
+            None => {
+                log::warn!("{}: No record to update", self.name);
+            }
         }
     }
 
@@ -725,15 +728,44 @@ struct TimeshiftRecord {
     program: EpgProgram,
     start: TimeshiftPoint,
     end: TimeshiftPoint,
+    recording: bool,
 }
 
 impl TimeshiftRecord {
-    fn get_size(&self, file_size: u64) -> u64 {
-        if self.end.pos < self.start.pos {
-            file_size - self.start.pos + self.end.pos
-        } else {
-            self.end.pos - self.start.pos
+    fn new(id: TimeshiftRecordId, program: EpgProgram, point: TimeshiftPoint) -> Self {
+        TimeshiftRecord {
+            id,
+            program,
+            start: point.clone(),
+            end: point.clone(),
+            recording: true,
         }
+    }
+
+    fn update(&mut self, program: EpgProgram, point: TimeshiftPoint, end: bool) {
+        self.program = program;
+        self.end = point;
+        if end {
+            self.recording = false;
+        }
+    }
+
+    fn create_record_stream_source(
+        &self,
+        recorder_name: String,
+        config: &TimeshiftConfig,
+        start_pos: Option<u64>,
+    ) -> Result<TimeshiftRecordStreamSource, Error> {
+        let file = config.file.clone();
+        let file_size = config.max_file_size();
+        let id = self.id;
+        let size = self.get_size(file_size);
+        let (start, range) = if let Some(pos) = start_pos {
+            ((self.start.pos + pos) % file_size, self.make_range(pos, size)?)
+        } else {
+            (self.start.pos, self.make_range(0, size)?)
+        };
+        Ok(TimeshiftRecordStreamSource { recorder_name, file, id, start, range })
     }
 
     fn get_model(&self, config: &TimeshiftConfig) -> TimeshiftRecordModel {
@@ -743,6 +775,23 @@ impl TimeshiftRecord {
             start_time: self.start.timestamp.clone(),
             duration: self.end.timestamp - self.start.timestamp,
             size: self.get_size(config.max_file_size()),
+            recording: self.recording,
+        }
+    }
+
+    fn get_size(&self, file_size: u64) -> u64 {
+        if self.end.pos < self.start.pos {
+            file_size - self.start.pos + self.end.pos
+        } else {
+            self.end.pos - self.start.pos
+        }
+    }
+
+    fn make_range(&self, first: u64, size: u64) -> Result<MpegTsStreamRange, Error> {
+        if self.recording {
+            MpegTsStreamRange::unbound(first, size)
+        } else {
+            MpegTsStreamRange::bound(first, size)
         }
     }
 }
@@ -767,11 +816,11 @@ impl TimeshiftStreamSource {
 }
 
 struct TimeshiftRecordStreamSource {
-    name: String,
+    recorder_name: String,
     file: String,
-    start: TimeshiftPoint,
-    end: TimeshiftPoint,
-    size: u64,
+    id: TimeshiftRecordId,
+    start: u64,
+    range: MpegTsStreamRange,
 }
 
 impl TimeshiftRecordStreamSource {
@@ -779,13 +828,13 @@ impl TimeshiftRecordStreamSource {
     const CHUNK_SIZE: usize = 4096 * 8;
 
     async fn create_stream(self) -> Result<TimeshiftRecordStream, Error> {
-        log::debug!("{}: Start on-demand streaming from {} to {}",
-                    self.name, self.start, self.end);
+        log::debug!("{}: Start streaming {} bytes of Record#{} from {}",
+                    self.recorder_name, self.range.bytes(), self.id, self.start);
         let mut file = TimeshiftFile::open(&self.file).await?;
-        file.set_position(self.start.pos).await?;
-        let file = file.take(self.size);
+        file.set_position(self.start).await?;
+        let file = file.take(self.range.bytes());
         let reader = ChunkStream::new(file, Self::CHUNK_SIZE);
-        Ok(MpegTsStream::new(0, reader))  // TODO: id
+        Ok(MpegTsStream::with_range(0, reader, self.range))  // TODO: id
     }
 }
 
@@ -893,6 +942,7 @@ mod tests {
                         timestamp: Jst.ymd(2021, 1, 1).and_hms(0, 0, 0),
                         pos: 0,
                     },
+                    recording: false,
                 },
             },
             points: vec![
@@ -923,6 +973,7 @@ mod tests {
                         timestamp: Jst.ymd(2021, 1, 1).and_hms(0, 0, 0),
                         pos: 0,
                     },
+                    recording: false,
                 },
                 1.into() => TimeshiftRecord {
                     id: 1.into(),
@@ -935,6 +986,7 @@ mod tests {
                         timestamp: Jst.ymd(2021, 1, 1).and_hms(0, 1, 0),
                         pos: 0,
                     },
+                    recording: false,
                 },
                 2.into() => TimeshiftRecord {
                     id: 2.into(),
@@ -947,6 +999,7 @@ mod tests {
                         timestamp: Jst.ymd(2021, 1, 1).and_hms(0, 2, 0),
                         pos: 0,
                     },
+                    recording: false,
                 },
             },
             points: vec![

@@ -705,6 +705,7 @@ pub struct TimeshiftRecordModel {
     #[serde(with = "serde_duration_in_millis")]
     pub duration: Duration,
     pub size: u64,
+    pub recording: bool,
 }
 
 #[cfg(test)]

@@ -28,6 +28,10 @@ pub enum Error {
     RecordNotFound,
     #[fail(display = "Session not found")]
     SessionNotFound,
+    #[fail(display = "Out of range")]
+    OutOfRange,
+    #[fail(display = "No content")]
+    NoContent,
     #[fail(display = "Access denied")]
     AccessDenied,
     #[fail(display = "Command failed: {}", 0)]

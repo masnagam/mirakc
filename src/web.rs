@@ -151,6 +151,18 @@ impl actix_web::ResponseError for Error {
                     reason: None,
                     errors: Vec::new(),
                 }),
+            Error::OutOfRange =>
+                actix_web::HttpResponse::RangeNotSatisfiable().json(ErrorBody {
+                    code: actix_web::http::StatusCode::RANGE_NOT_SATISFIABLE.as_u16(),
+                    reason: None,
+                    errors: Vec::new(),
+                }),
+            Error::NoContent =>
+                actix_web::HttpResponse::NoContent().json(ErrorBody {
+                    code: actix_web::http::StatusCode::NO_CONTENT.as_u16(),
+                    reason: None,
+                    errors: Vec::new(),
+                }),
             Error::AccessDenied =>
                 actix_web::HttpResponse::Forbidden().json(ErrorBody {
                     code: actix_web::http::StatusCode::FORBIDDEN.as_u16(),
@@ -502,6 +514,7 @@ async fn get_timeshift_stream(
 
 #[actix_web::get("/timeshift/{recorder}/records/{record}/stream")]
 async fn get_timeshift_record_stream(
+    req: actix_web::HttpRequest,
     config: actix_web::web::Data<Arc<Config>>,
     timeshift_manager: actix_web::web::Data<Addr<TimeshiftManagerActor>>,
     path: actix_web::web::Path<TimeshiftRecordPath>,
@@ -518,9 +531,25 @@ async fn get_timeshift_record_stream(
         &config.post_filters, &filter_setting.post_filters)?;
     let (filters, content_type) = builder.build();
 
+    let record = timeshift_manager.send(QueryTimeshiftRecordMessage{
+        recorder_name: path.recorder.clone(),
+        record_id: path.record,
+    }).await??;
+
+    let start_pos = req
+        .headers()
+        .get(actix_web::http::header::RANGE)
+        .iter()
+        .flat_map(|header| header.to_str().ok())
+        .flat_map(|header| http_range::HttpRange::parse(header, record.size).ok())
+        .flat_map(|ranges| ranges.iter().cloned().next())
+        .map(|range| range.start)
+        .next();
+
     let stream = timeshift_manager.send(StartTimeshiftRecordStreamingMessage{
         recorder_name: path.recorder.clone(),
         record_id: path.record,
+        start_pos,
     }).await??;
 
     streaming(&config, user, stream, filters, content_type, ()).await
@@ -702,9 +731,11 @@ where
     S: Stream<Item = io::Result<Bytes>> + Unpin + 'static,
     D: Unpin + 'static,
 {
+    let range = stream.range();
     if filters.is_empty() {
         do_streaming(
-            user, stream, content_type, stop_triggers, config.server.stream_time_limit).await
+            user, stream, content_type, range, stop_triggers,
+            config.server.stream_time_limit).await
     } else {
         log::debug!("Streaming with filters: {:?}", filters);
 
@@ -757,7 +788,8 @@ where
         });
 
         do_streaming(
-            user, receiver, content_type, stop_triggers, config.server.stream_time_limit).await
+            user, receiver, content_type, range, stop_triggers,
+            config.server.stream_time_limit).await
     }
 }
 
@@ -765,6 +797,7 @@ async fn do_streaming<S, D>(
     user: TunerUser,
     stream: S,
     content_type: String,
+    range: Option<MpegTsStreamRange>,
     stop_trigger: D,
     time_limit: u64,
 ) -> ApiResult
@@ -790,12 +823,23 @@ where
         }
         Ok(_) =>  {
             // Send the response headers and start streaming.
-            Ok(actix_web::HttpResponse::Ok()
-               .force_close()
+            let mut builder = actix_web::HttpResponse::Ok();
+            builder
+                .force_close()
                .set_header("cache-control", "no-store")
                .set_header("content-type", content_type)
-               .set_header("x-mirakurun-tuner-user-id", user.get_mirakurun_model().id)
-               .streaming(peekable))
+               .set_header("x-mirakurun-tuner-user-id", user.get_mirakurun_model().id);
+            if let Some(range) = range {
+                if range.is_partial() {
+                    builder
+                        .status(actix_web::http::StatusCode::PARTIAL_CONTENT);
+                }
+                builder
+                    .set_header("accept-ranges", "bytes")
+                    .set_header("content-range", range.make_content_range())
+                    .no_chunking(range.bytes());
+            }
+            Ok(builder.streaming(peekable))
         }
     }
 }
@@ -1399,11 +1443,13 @@ mod tests {
         let user = user_for_test(0.into());
 
         let result = do_streaming(
-            user.clone(), futures::stream::empty(), "video/MP2T".to_string(), (), 1000).await;
+            user.clone(), futures::stream::empty(), "video/MP2T".to_string(), None, (),
+            1000).await;
         assert_matches!(result, Err(Error::ProgramNotFound));
 
         let result = do_streaming(
-            user.clone(),  futures::stream::pending(), "video/MP2T".to_string(), (), 1).await;
+            user.clone(),  futures::stream::pending(), "video/MP2T".to_string(), None, (),
+            1).await;
         assert_matches!(result, Err(Error::StreamingTimedOut));
     }
 
