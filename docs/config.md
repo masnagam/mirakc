@@ -368,10 +368,10 @@ with the following template data:
   * The `channel` property of a channel defined in the `channels`
 * sid
   * The 16-bit integer identifier of a service (SID)
-  * Available only for the service streaming and the program streaming
+  * Available only for the service streaming, the program streaming and the record streaming
 * eid
   * The 16-bit integer identifier of a program (EID)
-  * Available only for the program streaming
+  * Available only for the program streaming and the record streaming
 * clock_pid
   * A PID of PCR packets to be used for the clock synchronization
   * Available only for the program streaming
@@ -383,10 +383,19 @@ with the following template data:
   * Available only for the program streaming
 * video_tags
   * `component_tag` of a video stream in the program
-  * Available only for the program streaming
+  * Available only for the program streaming and the record streaming
 * audio_tags
   * `component_tag`s of audio streams in the program
-  * Available only for the program streaming
+  * Available only for the program streaming and the record streaming
+* id
+  * The identifier of a record
+  * Available only for the record streaming
+* duration
+  * A duration of a record in seconds
+  * Available only for the record streaming
+* size
+  * Size of a record in bytes
+  * Available only for the record streaming
 
 ### filters.tuner-filter
 

@@ -725,8 +725,9 @@ impl TimeshiftRecorder {
         };
         TimeshiftRecorderModel {
             name: self.name.clone(),
+            service: self.service.clone(),
             start_time,
-            duration: end_time - start_time,
+            end_time,
             recording: self.is_active(),
         }
     }
@@ -744,6 +745,23 @@ struct TimeshiftActivation {
     service: EpgService,
     tuner_manager: Addr<TunerManager>,
     manager: Addr<TimeshiftManager>,
+}
+
+pub struct TimeshiftRecorderModel {
+    pub name: String,
+    pub service: EpgService,
+    pub start_time: DateTime<Jst>,
+    pub end_time: DateTime<Jst>,
+    pub recording: bool,
+}
+
+pub struct TimeshiftRecordModel {
+    pub id: TimeshiftRecordId,
+    pub program: EpgProgram,
+    pub start_time: DateTime<Jst>,
+    pub end_time: DateTime<Jst>,
+    pub size: u64,
+    pub recording: bool,
 }
 
 #[derive(Deserialize)]
@@ -841,9 +859,9 @@ impl TimeshiftRecord {
     fn get_model(&self, config: &TimeshiftConfig) -> TimeshiftRecordModel {
         TimeshiftRecordModel {
             id: self.id,
-            program: self.program.clone().into(),
+            program: self.program.clone(),
             start_time: self.start.timestamp.clone(),
-            duration: self.end.timestamp - self.start.timestamp,
+            end_time: self.end.timestamp.clone(),
             size: self.get_size(config.max_file_size()),
             recording: self.recording,
         }

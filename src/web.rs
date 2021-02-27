@@ -230,7 +230,8 @@ async fn get_services(
 ) -> ApiResult {
     epg.send(QueryServicesMessage).await?
         .map(|services| services.into_iter()
-             .map(MirakurunService::from).collect::<Vec<MirakurunService>>())
+             .map(MirakurunService::from)
+             .collect::<Vec<MirakurunService>>())
         .map(|services| actix_web::HttpResponse::Ok().json(services))
 }
 
@@ -253,7 +254,8 @@ async fn get_programs(
 ) -> ApiResult {
     epg.send(QueryProgramsMessage).await?
         .map(|programs| programs.into_iter()
-             .map(MirakurunProgram::from).collect::<Vec<MirakurunProgram>>())
+             .map(MirakurunProgram::from)
+             .collect::<Vec<MirakurunProgram>>())
         .map(|programs| actix_web::HttpResponse::Ok().json(programs))
 }
 
@@ -448,6 +450,9 @@ async fn get_timeshift_recorders(
     timeshift_manager: actix_web::web::Data<Addr<TimeshiftManagerActor>>,
 ) -> ApiResult {
     timeshift_manager.send(QueryTimeshiftRecordersMessage).await?
+        .map(|recorders| recorders.into_iter()
+             .map(MirakurunTimeshiftRecorder::from)
+             .collect::<Vec<MirakurunTimeshiftRecorder>>())
         .map(|recorders| actix_web::HttpResponse::Ok().json(recorders))
 }
 
@@ -459,6 +464,7 @@ async fn get_timeshift_recorder(
     timeshift_manager.send(QueryTimeshiftRecorderMessage {
         name: path.recorder.clone(),
     }).await?
+        .map(MirakurunTimeshiftRecorder::from)
         .map(|recorder| actix_web::HttpResponse::Ok().json(recorder))
 }
 
@@ -470,6 +476,9 @@ async fn get_timeshift_records(
     timeshift_manager.send(QueryTimeshiftRecordsMessage {
         recorder_name: path.recorder.clone(),
     }).await?
+        .map(|records| records.into_iter()
+             .map(MirakurunTimeshiftRecord::from)
+             .collect::<Vec<MirakurunTimeshiftRecord>>())
         .map(|records| actix_web::HttpResponse::Ok().json(records))
 }
 
@@ -482,6 +491,7 @@ async fn get_timeshift_record(
         recorder_name: path.recorder.clone(),
         record_id: path.record,
     }).await?
+        .map(MirakurunTimeshiftRecord::from)
         .map(|record| actix_web::HttpResponse::Ok().json(record))
 }
 
@@ -494,7 +504,15 @@ async fn get_timeshift_stream(
     stream_query: actix_web::web::Query<TimeshiftStreamQuery>,
     filter_setting: FilterSetting,
 ) -> ApiResult {
+    let recorder = timeshift_manager.send(QueryTimeshiftRecorderMessage {
+        name: path.recorder.clone(),
+    }).await??;
+
     let data = mustache::MapBuilder::new()
+        .insert_str("channel_name", &recorder.service.channel.name)
+        .insert("channel_type", &recorder.service.channel.channel_type)?
+        .insert_str("channel", &recorder.service.channel.channel)
+        .insert("sid", &recorder.service.sid.value())?
         .build();
 
     let mut builder = FilterPipelineBuilder::new(data);
@@ -524,7 +542,38 @@ async fn get_timeshift_record_stream(
     user: TunerUser,
     filter_setting: FilterSetting,
 ) -> ApiResult {
+    let recorder = timeshift_manager.send(QueryTimeshiftRecorderMessage {
+        name: path.recorder.clone(),
+    }).await??;
+
+    let record = timeshift_manager.send(QueryTimeshiftRecordMessage{
+        recorder_name: path.recorder.clone(),
+        record_id: path.record,
+    }).await??;
+
+    let video_tags: Vec<u8> = record.program.video
+        .iter()
+        .map(|video| video.component_tag)
+        .collect();
+
+    let audio_tags: Vec<u8> = record.program.audios
+        .values()
+        .map(|audio| audio.component_tag)
+        .collect();
+
+    let duration = record.end_time - record.start_time;
+
     let data = mustache::MapBuilder::new()
+        .insert_str("channel_name", &recorder.service.channel.name)
+        .insert("channel_type", &recorder.service.channel.channel_type)?
+        .insert_str("channel", &recorder.service.channel.channel)
+        .insert("sid", &recorder.service.sid.value())?
+        .insert("eid", &record.program.quad.eid())?
+        .insert("video_tags", &video_tags)?
+        .insert("audio_tags", &audio_tags)?
+        .insert("id", &record.id)?
+        .insert("duration", &duration.num_seconds())?
+        .insert("size", &record.size)?
         .build();
 
     let mut builder = FilterPipelineBuilder::new(data);
@@ -536,11 +585,6 @@ async fn get_timeshift_record_stream(
     builder.add_post_filters(
         &config.post_filters, &filter_setting.post_filters)?;
     let (filters, content_type) = builder.build();
-
-    let record = timeshift_manager.send(QueryTimeshiftRecordMessage{
-        recorder_name: path.recorder.clone(),
-        record_id: path.record,
-    }).await??;
 
     let start_pos = req
         .headers()
@@ -1402,7 +1446,7 @@ mod tests {
         assert!(res.headers().contains_key("x-mirakurun-tuner-user-id"));
 
         let res = get("/api/timeshift/not_found/stream").await;
-        assert!(res.status() == actix_web::http::StatusCode::NO_CONTENT);
+        assert!(res.status() == actix_web::http::StatusCode::NOT_FOUND);
     }
 
     #[actix_rt::test]
@@ -1412,7 +1456,7 @@ mod tests {
         assert!(res.headers().contains_key("x-mirakurun-tuner-user-id"));
 
         let res = get("/api/timeshift/not_found/records/0/stream").await;
-        assert!(res.status() == actix_web::http::StatusCode::NO_CONTENT);
+        assert!(res.status() == actix_web::http::StatusCode::NOT_FOUND);
     }
 
     #[actix_rt::test]
@@ -1717,8 +1761,25 @@ mod tests {
                 let result = if msg.name == "test" {
                     Ok(TimeshiftRecorderModel {
                         name: "test".to_string(),
+                        service: EpgService {
+                            nid: 1.into(),
+                            tsid: 2.into(),
+                            sid: 3.into(),
+                            service_type: 1,
+                            logo_id: 0,
+                            remote_control_key_id: 0,
+                            name: "test".to_string(),
+                            channel: EpgChannel {
+                                name: "test".to_string(),
+                                channel_type: ChannelType::GR,
+                                channel: "test".to_string(),
+                                extra_args: "".to_string(),
+                                services: Vec::new(),
+                                excluded_services: Vec::new(),
+                            },
+                        },
                         start_time: Jst::now(),
-                        duration: chrono::Duration::seconds(1),
+                        end_time: Jst::now(),
                         recording: true,
                     })
                 } else {
@@ -1732,9 +1793,9 @@ mod tests {
                 let result = if msg.record_id == 0.into() {
                     Ok(TimeshiftRecordModel {
                         id: 0.into(),
-                        program: EpgProgram::new((0, 0, 0, 0).into()).into(),
+                        program: EpgProgram::new((0, 0, 0, 0).into()),
                         start_time: Jst::now(),
-                        duration: chrono::Duration::seconds(1),
+                        end_time: Jst::now(),
                         size: 0,
                         recording: true,
                     })
