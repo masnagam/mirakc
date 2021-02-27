@@ -525,12 +525,12 @@ async fn get_timeshift_stream(
         &config.post_filters, &filter_setting.post_filters)?;
     let (filters, content_type) = builder.build();
 
-    let stream = timeshift_manager.send(StartTimeshiftStreamingMessage {
+    let (stream, stop_trigger) = timeshift_manager.send(StartTimeshiftStreamingMessage {
         recorder_name: path.recorder.clone(),
         record_id: stream_query.record,
     }).await??;
 
-    streaming(&config, user, stream, filters, content_type, ()).await
+    streaming(&config, user, stream, filters, content_type, stop_trigger).await
 }
 
 #[actix_web::get("/timeshift/{recorder}/records/{record}/stream")]
@@ -596,13 +596,13 @@ async fn get_timeshift_record_stream(
         .map(|range| range.start)
         .next();
 
-    let stream = timeshift_manager.send(StartTimeshiftRecordStreamingMessage{
+    let (stream, stop_trigger) = timeshift_manager.send(StartTimeshiftRecordStreamingMessage {
         recorder_name: path.recorder.clone(),
         record_id: path.record,
         start_pos,
     }).await??;
 
-    streaming(&config, user, stream, filters, content_type, ()).await
+    streaming(&config, user, stream, filters, content_type, stop_trigger).await
 }
 
 #[actix_web::get("/iptv/playlist")]
@@ -777,7 +777,7 @@ async fn streaming<T, S, D>(
     stop_triggers: D,
 ) -> ApiResult
 where
-    T: fmt::Display + Copy + Unpin + 'static,
+    T: fmt::Display + Clone + Unpin + 'static,
     S: Stream<Item = io::Result<Bytes>> + Unpin + 'static,
     D: Unpin + 'static,
 {
@@ -1805,9 +1805,9 @@ mod tests {
                 Box::<Option<Result<_, Error>>>::new(Some(result))
             } else if let Some(msg) = msg.downcast_ref::<StartTimeshiftStreamingMessage>() {
                 let result = if msg.recorder_name == "test" {
-                    let file = TimeshiftFile::open_for_test();
-                    let stream = ChunkStream::new_for_test(file);
-                    Ok(MpegTsStream::new(0 as usize, stream))
+                    let (reader, stop_trigger) = TimeshiftFileReader::open_for_test();
+                    let stream = ChunkStream::new_for_test(reader);
+                    Ok((MpegTsStream::new("".to_string(), stream), stop_trigger))
                 } else {
                     Err(Error::NoContent)
                 };
@@ -1815,9 +1815,9 @@ mod tests {
             } else if let Some(msg) = msg.downcast_ref::<StartTimeshiftRecordStreamingMessage>() {
                 use tokio::io::AsyncReadExt;
                 let result = if msg.recorder_name == "test" {
-                    let file = TimeshiftFile::open_for_test().take(1);
-                    let stream = ChunkStream::new_for_test(file);
-                    Ok(MpegTsStream::new(0 as usize, stream))
+                    let (reader, stop_trigger) = TimeshiftFileReader::open_for_test();
+                    let stream = ChunkStream::new_for_test(reader.take(1));
+                    Ok((MpegTsStream::new("".to_string(), stream), stop_trigger))
                 } else {
                     Err(Error::NoContent)
                 };

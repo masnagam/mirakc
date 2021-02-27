@@ -1,7 +1,6 @@
 use std::env;
 use std::fmt;
 use std::io;
-use std::marker::{Copy, Unpin};
 use std::os::unix::io::AsRawFd;
 use std::pin::Pin;
 use std::process::{Command, Child, ChildStdin, ChildStdout, Stdio};
@@ -73,7 +72,7 @@ pub fn spawn_pipeline<T>(
     id: T,
 ) -> Result<CommandPipeline<T>, Error>
 where
-    T: Copy + fmt::Display + Unpin
+    T: fmt::Display + Clone + Unpin,
 {
     let mut pipeline = CommandPipeline::new(id);
     for command in commands.into_iter() {
@@ -98,7 +97,7 @@ pub enum Error {
 
 pub struct CommandPipeline<T>
 where
-    T: Copy + fmt::Display + Unpin
+    T: fmt::Display + Clone + Unpin,
 {
     id: T,
     sender: broadcast::Sender<()>,
@@ -114,7 +113,7 @@ struct CommandData {
 
 impl<T> CommandPipeline<T>
 where
-    T: Copy + fmt::Display + Unpin
+    T: fmt::Display + Clone + Unpin,
 {
     fn new(id: T) -> Self {
         let (sender, _) = broadcast::channel(1);
@@ -160,10 +159,10 @@ where
         assert!(self.stdin.is_some());
         assert!(self.stdout.is_some());
         let input = CommandPipelineInput::new(
-            Self::make_childio_async(self.stdin.take())?, self.id,
+            Self::make_childio_async(self.stdin.take())?, self.id.clone(),
             self.sender.subscribe());
         let output = CommandPipelineOutput::new(
-            Self::make_childio_async(self.stdout.take())?, self.id,
+            Self::make_childio_async(self.stdout.take())?, self.id.clone(),
             self.sender.subscribe());
         Ok((input, output))
     }
@@ -180,7 +179,7 @@ where
 
 impl<T> Drop for CommandPipeline<T>
 where
-    T: Copy + fmt::Display + Unpin
+    T: fmt::Display + Clone + Unpin,
 {
     fn drop(&mut self) {
         // Always kill the processes and ignore the error.  Because there is no
@@ -198,7 +197,7 @@ where
 
 pub struct CommandPipelineInput<T>
 where
-    T: Copy + fmt::Display + Unpin
+    T: fmt::Display + Clone + Unpin,
 {
     inner: tokio_snippet::ChildIo<ChildStdin>,
     _pipeline_id: T,
@@ -207,7 +206,7 @@ where
 
 impl<T> CommandPipelineInput<T>
 where
-    T: Copy + fmt::Display + Unpin
+    T: fmt::Display + Clone + Unpin,
 {
     fn new(
         inner: tokio_snippet::ChildIo<ChildStdin>,
@@ -227,7 +226,7 @@ where
 
 impl<T> AsyncWrite for CommandPipelineInput<T>
 where
-    T: Copy + fmt::Display + Unpin
+    T: fmt::Display + Clone + Unpin,
 {
     fn poll_write(
         mut self: Pin<&mut Self>,
@@ -268,7 +267,7 @@ where
 
 pub struct CommandPipelineOutput<T>
 where
-    T: Copy + fmt::Display + Unpin
+    T: fmt::Display + Clone + Unpin,
 {
     inner: tokio_snippet::ChildIo<ChildStdout>,
     _pipeline_id: T,
@@ -277,7 +276,7 @@ where
 
 impl<T> CommandPipelineOutput<T>
 where
-    T: Copy + fmt::Display + Unpin
+    T: fmt::Display + Clone + Unpin,
 {
     fn new(
         inner: tokio_snippet::ChildIo<ChildStdout>,
@@ -297,7 +296,7 @@ where
 
 impl<T> AsyncRead for CommandPipelineOutput<T>
 where
-    T: Copy + fmt::Display + Unpin
+    T: fmt::Display + Clone + Unpin,
 {
     fn poll_read(
         mut self: Pin<&mut Self>,

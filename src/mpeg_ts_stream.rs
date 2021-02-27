@@ -30,16 +30,16 @@ impl<T, S> MpegTsStream<T, S> {
 
 impl<T, S> MpegTsStream<T, S>
 where
-    T: Copy,
+    T: Clone,
 {
     pub fn id(&self) -> T {
-        self.id
+        self.id.clone()
     }
 }
 
 impl<T, S> MpegTsStream<T, S>
 where
-    T: fmt::Display + Copy + Unpin,
+    T: fmt::Display + Clone + Unpin,
     S: Stream<Item = io::Result<Bytes>> + Unpin,
 {
     pub async fn pipe<W>(self, writer: W)
@@ -163,7 +163,7 @@ where
 
 async fn pipe<T, S, W>(mut stream: MpegTsStream<T, S>, mut writer: W)
 where
-    T: fmt::Display + Copy + Unpin,
+    T: fmt::Display + Clone + Unpin,
     S: Stream<Item = io::Result<Bytes>> + Unpin,
     W: AsyncWrite + Unpin,
 {

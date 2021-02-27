@@ -12,6 +12,7 @@ use serde::Deserialize;
 use tokio::prelude::*;
 use tokio::io::{AsyncSeek, BufReader, SeekFrom, Take};
 use tokio::fs::File;
+use tokio::sync::oneshot;
 
 use crate::config::{Config, TimeshiftConfig};
 use crate::chunk_stream::*;
@@ -34,8 +35,8 @@ pub fn start(
 
 // timeshift manager
 
-type TimeshiftStream = MpegTsStream<usize, ChunkStream<TimeshiftFile>>;
-type TimeshiftRecordStream = MpegTsStream<usize, ChunkStream<Take<TimeshiftFile>>>;
+type TimeshiftStream = MpegTsStream<String, ChunkStream<TimeshiftFileReader>>;
+type TimeshiftRecordStream = MpegTsStream<String, ChunkStream<Take<TimeshiftFileReader>>>;
 
 pub struct TimeshiftManager {
     config: Arc<Config>,
@@ -352,7 +353,7 @@ impl Handler<QueryTimeshiftRecordMessage> for TimeshiftManager {
 }
 
 #[derive(Message)]
-#[rtype(result = "Result<TimeshiftStream, Error>")]
+#[rtype(result = "Result<(TimeshiftStream, TimeshiftStreamStopTrigger), Error>")]
 pub struct StartTimeshiftStreamingMessage {
     pub recorder_name: String,
     pub record_id: Option<TimeshiftRecordId>,
@@ -370,7 +371,7 @@ impl fmt::Display for StartTimeshiftStreamingMessage {
 }
 
 impl Handler<StartTimeshiftStreamingMessage> for TimeshiftManager {
-    type Result = ResponseFuture<Result<TimeshiftStream, Error>>;
+    type Result = ResponseFuture<Result<(TimeshiftStream, TimeshiftStreamStopTrigger), Error>>;
 
     fn handle(
         &mut self,
@@ -386,7 +387,7 @@ impl Handler<StartTimeshiftStreamingMessage> for TimeshiftManager {
 }
 
 #[derive(Message)]
-#[rtype(result = "Result<TimeshiftRecordStream, Error>")]
+#[rtype(result = "Result<(TimeshiftRecordStream, TimeshiftStreamStopTrigger), Error>")]
 pub struct StartTimeshiftRecordStreamingMessage {
     pub recorder_name: String,
     pub record_id: TimeshiftRecordId,
@@ -406,7 +407,8 @@ impl fmt::Display for StartTimeshiftRecordStreamingMessage {
 }
 
 impl Handler<StartTimeshiftRecordStreamingMessage> for TimeshiftManager {
-    type Result = ResponseFuture<Result<TimeshiftRecordStream, Error>>;
+    type Result =
+        ResponseFuture<Result<(TimeshiftRecordStream, TimeshiftStreamStopTrigger), Error>>;
 
     fn handle(
         &mut self,
@@ -894,12 +896,15 @@ impl TimeshiftStreamSource {
     // 32 KiB, large enough for 10 ms buffering.
     const CHUNK_SIZE: usize = 4096 * 8;
 
-    async fn create_stream(self) -> Result<TimeshiftStream, Error> {
+    async fn create_stream(
+        self
+    ) -> Result<(TimeshiftStream, TimeshiftStreamStopTrigger), Error> {
         log::debug!("{}: Start live streaming from {}", self.name, self.point);
-        let mut file = TimeshiftFile::open(&self.file).await?;
-        file.set_position(self.point.pos).await?;
-        let reader = ChunkStream::new(file, Self::CHUNK_SIZE);
-        Ok(MpegTsStream::new(0, reader))  // TODO: id
+        let (mut reader, stop_trigger) = TimeshiftFileReader::open(&self.file).await?;
+        reader.set_position(self.point.pos).await?;
+        let stream = ChunkStream::new(reader, Self::CHUNK_SIZE);
+        let id = format!("timeshift({})", self.name);
+        Ok((MpegTsStream::new(id, stream), stop_trigger))
     }
 }
 
@@ -915,36 +920,43 @@ impl TimeshiftRecordStreamSource {
     // 32 KiB, large enough for 10 ms buffering.
     const CHUNK_SIZE: usize = 4096 * 8;
 
-    async fn create_stream(self) -> Result<TimeshiftRecordStream, Error> {
+    async fn create_stream(
+        self
+    ) -> Result<(TimeshiftRecordStream, TimeshiftStreamStopTrigger), Error> {
         log::debug!("{}: Start streaming {} bytes of Record#{} from {}",
                     self.recorder_name, self.range.bytes(), self.id, self.start);
-        let mut file = TimeshiftFile::open(&self.file).await?;
-        file.set_position(self.start).await?;
-        let file = file.take(self.range.bytes());
-        let reader = ChunkStream::new(file, Self::CHUNK_SIZE);
-        Ok(MpegTsStream::with_range(0, reader, self.range))  // TODO: id
+        let (mut reader, stop_trigger) = TimeshiftFileReader::open(&self.file).await?;
+        reader.set_position(self.start).await?;
+        let stream = ChunkStream::new(reader.take(self.range.bytes()), Self::CHUNK_SIZE);
+        let id = format!("timeshift({})/record#{}", self.recorder_name, self.id);
+        Ok((MpegTsStream::with_range(id, stream, self.range), stop_trigger))
     }
 }
 
-pub struct TimeshiftFile {
-    state: TimeshiftFileState,
+pub struct TimeshiftFileReader {
+    state: TimeshiftFileReaderState,
     path: String,
     file: File,
+    stop_signal: oneshot::Receiver<()>,
 }
 
-enum TimeshiftFileState {
+enum TimeshiftFileReaderState {
     Read,
     Seek,
     Wait,
 }
 
-impl TimeshiftFile {
-    async fn open(path: &str) -> Result<Self, Error> {
-        Ok(TimeshiftFile {
-            state: TimeshiftFileState::Read,
+impl TimeshiftFileReader {
+    async fn open(path: &str) -> Result<(Self, TimeshiftStreamStopTrigger), Error> {
+        let (tx, rx) = oneshot::channel();
+        let reader = TimeshiftFileReader {
+            state: TimeshiftFileReaderState::Read,
             path: path.to_string(),
             file: File::open(path).await?,
-        })
+            stop_signal: rx,
+        };
+        let stop_trigger = TimeshiftStreamStopTrigger(Some(tx));
+        Ok((reader, stop_trigger))
     }
 
     async fn set_position(&mut self, pos: u64) -> Result<(), Error> {
@@ -953,27 +965,35 @@ impl TimeshiftFile {
     }
 
     #[cfg(test)]
-    pub fn open_for_test() -> Self {
-        TimeshiftFile {
-            state: TimeshiftFileState::Read,
+    pub fn open_for_test() -> (Self, TimeshiftStreamStopTrigger) {
+        let (tx, rx) = oneshot::channel();
+        let reader = TimeshiftFileReader {
+            state: TimeshiftFileReaderState::Read,
             path: "/dev/zero".to_string(),
-            file: File::from_std(std::fs::File::open("/dev/zero").unwrap()),
-        }
+            file: std::fs::File::open("/dev/zero").unwrap().into(),
+            stop_signal: rx,
+        };
+        let stop_trigger = TimeshiftStreamStopTrigger(Some(tx));
+        (reader, stop_trigger)
     }
 }
 
-impl AsyncRead for TimeshiftFile {
+impl AsyncRead for TimeshiftFileReader {
     fn poll_read(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
         buf: &mut [u8],
     ) -> Poll<io::Result<usize>> {
         loop {
+            if Pin::new(&mut self.stop_signal).poll(cx).is_ready() {
+                log::debug!("{}: Stopped reading", self.path);
+                return Poll::Ready(Ok(0));
+            }
             match self.state {
-                TimeshiftFileState::Read => {
+                TimeshiftFileReaderState::Read => {
                     match Pin::new(&mut self.file).poll_read(cx, buf) {
                         Poll::Ready(Ok(0)) => {
-                            self.state = TimeshiftFileState::Seek;
+                            self.state = TimeshiftFileReaderState::Seek;
                             log::debug!("{}: EOF reached", self.path);
                         }
                         poll => {
@@ -981,10 +1001,10 @@ impl AsyncRead for TimeshiftFile {
                         }
                     }
                 }
-                TimeshiftFileState::Seek => {
+                TimeshiftFileReaderState::Seek => {
                     match Pin::new(&mut self.file).start_seek(cx, SeekFrom::Start(0)) {
                         Poll::Ready(Ok(_)) => {
-                            self.state = TimeshiftFileState::Wait;
+                            self.state = TimeshiftFileReaderState::Wait;
                             log::debug!("{}: Seek to the beginning", self.path);
                         }
                         Poll::Ready(Err(err)) => {
@@ -995,11 +1015,11 @@ impl AsyncRead for TimeshiftFile {
                         }
                     }
                 }
-                TimeshiftFileState::Wait => {
+                TimeshiftFileReaderState::Wait => {
                     match Pin::new(&mut self.file).poll_complete(cx) {
                         Poll::Ready(Ok(pos)) => {
                             assert!(pos == 0);
-                            self.state = TimeshiftFileState::Read;
+                            self.state = TimeshiftFileReaderState::Read;
                             log::debug!("{}: The seek completed, restart streaming", self.path);
                         }
                         Poll::Ready(Err(err)) => {
@@ -1012,6 +1032,14 @@ impl AsyncRead for TimeshiftFile {
                 }
             }
         }
+    }
+}
+
+pub struct TimeshiftStreamStopTrigger(Option<oneshot::Sender<()>>);
+
+impl Drop for TimeshiftStreamStopTrigger {
+    fn drop(&mut self) {
+        let _ = self.0.take().unwrap().send(());
     }
 }
 
