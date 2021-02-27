@@ -500,6 +500,9 @@ async fn get_timeshift_stream(
     let mut builder = FilterPipelineBuilder::new(data);
     builder.add_pre_filters(
         &config.pre_filters, &filter_setting.pre_filters)?;
+    if filter_setting.decode {
+        builder.add_decode_filter(&config.filters.decode_filter)?;
+    }
     builder.add_post_filters(
         &config.post_filters, &filter_setting.post_filters)?;
     let (filters, content_type) = builder.build();
@@ -527,6 +530,9 @@ async fn get_timeshift_record_stream(
     let mut builder = FilterPipelineBuilder::new(data);
     builder.add_pre_filters(
         &config.pre_filters, &filter_setting.pre_filters)?;
+    if filter_setting.decode {
+        builder.add_decode_filter(&config.filters.decode_filter)?;
+    }
     builder.add_post_filters(
         &config.post_filters, &filter_setting.post_filters)?;
     let (filters, content_type) = builder.build();
@@ -1391,14 +1397,22 @@ mod tests {
 
     #[actix_rt::test]
     async fn test_get_timeshift_stream() {
-        // TODO
+        let res = get("/api/timeshift/test/stream").await;
+        assert!(res.status() == actix_web::http::StatusCode::OK);
+        assert!(res.headers().contains_key("x-mirakurun-tuner-user-id"));
 
-        //let res = get("/api/timeshift/test/stream").await;
-        //assert!(res.status() == actix_web::http::StatusCode::OK);
-        //assert!(res.headers().contains_key("x-mirakurun-tuner-user-id"));
+        let res = get("/api/timeshift/not_found/stream").await;
+        assert!(res.status() == actix_web::http::StatusCode::NO_CONTENT);
+    }
 
-        //let res = get("/api/timeshift/not_found/stream").await;
-        //assert!(res.status() == actix_web::http::StatusCode::NOT_FOUND);
+    #[actix_rt::test]
+    async fn test_get_timeshift_record_stream() {
+        let res = get("/api/timeshift/test/records/0/stream").await;
+        assert!(res.status() == actix_web::http::StatusCode::OK);
+        assert!(res.headers().contains_key("x-mirakurun-tuner-user-id"));
+
+        let res = get("/api/timeshift/not_found/records/0/stream").await;
+        assert!(res.status() == actix_web::http::StatusCode::NO_CONTENT);
     }
 
     #[actix_rt::test]
@@ -1726,6 +1740,25 @@ mod tests {
                     })
                 } else {
                     Err(Error::RecordNotFound)
+                };
+                Box::<Option<Result<_, Error>>>::new(Some(result))
+            } else if let Some(msg) = msg.downcast_ref::<StartTimeshiftStreamingMessage>() {
+                let result = if msg.recorder_name == "test" {
+                    let file = TimeshiftFile::open_for_test();
+                    let stream = ChunkStream::new_for_test(file);
+                    Ok(MpegTsStream::new(0 as usize, stream))
+                } else {
+                    Err(Error::NoContent)
+                };
+                Box::<Option<Result<_, Error>>>::new(Some(result))
+            } else if let Some(msg) = msg.downcast_ref::<StartTimeshiftRecordStreamingMessage>() {
+                use tokio::io::AsyncReadExt;
+                let result = if msg.recorder_name == "test" {
+                    let file = TimeshiftFile::open_for_test().take(1);
+                    let stream = ChunkStream::new_for_test(file);
+                    Ok(MpegTsStream::new(0 as usize, stream))
+                } else {
+                    Err(Error::NoContent)
                 };
                 Box::<Option<Result<_, Error>>>::new(Some(result))
             } else {

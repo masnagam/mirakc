@@ -20,6 +20,11 @@ impl<R> ChunkStream<R> {
     pub fn new(reader: R, chunk_size: usize) -> Self {
         ChunkStream { reader, chunk_size }
     }
+
+    #[cfg(test)]
+    pub fn new_for_test(reader: R) -> Self {
+        ChunkStream { reader, chunk_size: 4096 }
+    }
 }
 
 impl<R> Stream for ChunkStream<R>

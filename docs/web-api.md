@@ -234,8 +234,7 @@ The following command starts live streaming from a specific record:
 curl -sG http://mirakc:40772/api/timeshift/etv/stream?record=1
 ```
 
-You can specify pre-filters and post-filters like any other endpoint for
-streaming, but you don't need to specify the decode filter unlike others.
+You can specify filters and post-filters like any other endpoint for streaming.
 
 ### /api/timeshift/{recorder}/records/{record}/stream
 
@@ -247,5 +246,4 @@ The following command starts on-demand streaming from a specific record:
 curl -sG http://mirakc:40772/api/timeshift/etv/records/1/stream
 ```
 
-You can specify pre-filters and post-filters like any other endpoint for
-streaming, but you don't need to specify the decode filter unlike others.
+You can specify filters and post-filters like any other endpoint for streaming.

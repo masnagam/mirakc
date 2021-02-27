@@ -151,7 +151,14 @@ impl TimeshiftManager {
             .build();
         let mut builder = FilterPipelineBuilder::new(data);
         builder.add_service_filter(&activation.config.filters.service_filter)?;
-        builder.add_decode_filter(&activation.config.filters.decode_filter)?;
+        // NOTE
+        // ----
+        // We don't add the decode filter here for efficiency reasons.  Because users probably
+        // don't watch all of the recorded TV programs.  Therefore, it's more efficient to decode
+        // a TV program when streaming it.
+        //
+        // In addition, some of the users decodes the TS stream in the tuner command.  In this
+        // case, there is no need to decode at all.
         let (mut cmds, _) = builder.build();
 
         let data = mustache::MapBuilder::new()
@@ -925,6 +932,15 @@ impl TimeshiftFile {
     async fn set_position(&mut self, pos: u64) -> Result<(), Error> {
         let _ = self.file.seek(SeekFrom::Start(pos)).await;
         Ok(())
+    }
+
+    #[cfg(test)]
+    pub fn open_for_test() -> Self {
+        TimeshiftFile {
+            state: TimeshiftFileState::Read,
+            path: "/dev/zero".to_string(),
+            file: File::from_std(std::fs::File::open("/dev/zero").unwrap()),
+        }
     }
 }
 
