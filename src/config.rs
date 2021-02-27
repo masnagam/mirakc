@@ -187,6 +187,8 @@ pub struct TunerConfig {
     pub time_limit: u64,
     #[serde(default)]
     pub disabled: bool,
+    #[serde(default)]
+    pub decoded: bool,
 }
 
 impl TunerConfig {
@@ -742,6 +744,7 @@ mod tests {
                 command: "open tuner".to_string(),
                 time_limit: TunerConfig::default_time_limit(),
                 disabled: false,
+                decoded: false,
             });
 
         assert_eq!(
@@ -760,6 +763,7 @@ mod tests {
                 command: "open tuner".to_string(),
                 time_limit: 1,
                 disabled: false,
+                decoded: false,
             });
 
         assert_eq!(
@@ -778,6 +782,26 @@ mod tests {
                 command: "open tuner".to_string(),
                 time_limit: TunerConfig::default_time_limit(),
                 disabled: true,
+                decoded: false,
+            });
+
+        assert_eq!(
+            serde_yaml::from_str::<TunerConfig>(r#"
+                name: x
+                types: [GR, BS, CS, SKY]
+                command: open tuner
+                decoded: true
+            "#).unwrap(),
+            TunerConfig {
+                name: "x".to_string(),
+                channel_types: vec![ChannelType::GR,
+                                    ChannelType::BS,
+                                    ChannelType::CS,
+                                    ChannelType::SKY],
+                command: "open tuner".to_string(),
+                time_limit: TunerConfig::default_time_limit(),
+                disabled: false,
+                decoded: true,
             });
 
         assert!(

@@ -73,6 +73,13 @@ pub struct TunerManager {
 struct TunerSubscription {
     id: TunerSubscriptionId,
     broadcaster: Addr<Broadcaster>,
+    decoded: bool,
+}
+
+impl TunerSubscription {
+    fn new(id: TunerSubscriptionId, broadcaster: Addr<Broadcaster>) -> Self {
+        Self { id, broadcaster, decoded: false, }
+    }
 }
 
 impl TunerManager {
@@ -264,7 +271,7 @@ impl Handler<StartStreamingMessage> for TunerManager {
         log::debug!("{}", msg);
 
         let subscription = match self.activate_tuner(msg.channel, msg.user) {
-            Ok(broadcaster) => broadcaster,
+            Ok(subscription) => subscription,
             Err(err) => return ActorResponse::reply(Err(Error::from(err))),
         };
 
@@ -282,6 +289,7 @@ impl Handler<StartStreamingMessage> for TunerManager {
                 }
                 result
                     .map(|stream| MpegTsStream::new(subscription.id, stream))
+                    .map(|stream| if subscription.decoded { stream.decoded() } else { stream })
                     .map_err(Error::from)
             });
 
@@ -326,6 +334,7 @@ struct Tuner {
     channel_types: Vec<ChannelType>,
     command: String,
     time_limit: u64,
+    decoded: bool,
     activity: TunerActivity,
 }
 
@@ -340,6 +349,7 @@ impl Tuner {
             channel_types: config.channel_types.clone(),
             command: config.command.clone(),
             time_limit: config.time_limit,
+            decoded: config.decoded,
             activity: TunerActivity::Inactive,
         }
     }
@@ -383,7 +393,9 @@ impl Tuner {
     }
 
     fn subscribe(&mut self, user: TunerUser) -> TunerSubscription {
-        self.activity.subscribe(user)
+        let mut subscription = self.activity.subscribe(user);
+        subscription.decoded = self.decoded;
+        subscription
     }
 
     fn stop_streaming(
@@ -561,7 +573,7 @@ impl TunerSession {
         log::info!("{}: Subscribed: {}", id, user);
         self.subscribers.insert(serial_number, user);
 
-        TunerSubscription { id, broadcaster: self.broadcaster.clone() }
+        TunerSubscription::new(id, self.broadcaster.clone())
     }
 
     fn can_grab(&self, priority: TunerUserPriority) -> bool {
@@ -799,6 +811,7 @@ mod tests {
             command,
             time_limit: 10 * 1000,
             disabled: false,
+            decoded: false,
         }
     }
 

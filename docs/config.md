@@ -27,6 +27,7 @@ suitable for your environment.
 | [tuners\[\].command]             |                                           |
 | [tuners\[\].time-limit]          | `30000` (30s)                             |
 | [tuners\[\].disabled]            | `false`                                   |
+| [tuners\[\].decoded]             | `false`                                   |
 | [filters.tuner-filter.command]   | `''`                                      |
 | [filters.service-filter.command] | `mirakc-arib filter-service --sid={{{sid}}}`|
 | [filters.decode-filter.command]  | `''`                                      |
@@ -67,6 +68,7 @@ suitable for your environment.
 [tuners\[\].command]: #tuners
 [tuners\[\].time-limit]: #tuners
 [tuners\[\].disabled]: #tuners
+[tuners\[\].decoded]: #tuners
 [filters.tuner-filter.command]: #filterstuner-filter
 [filters.service-filter.command]: #filtersservice-filter
 [filters.decode-filter.command]: #filtersdecode-filter
@@ -294,6 +296,8 @@ Definitions of tuners.  At least, one tuner must be defined.
   * Stop streaming if no TS packet comes from the tuner for the time limit
 * disabled (optional)
   * Disable the tuner
+* decoded (optional)
+  * PES packets are decoded by the tuner command
 
 Command template variables:
 

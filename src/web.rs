@@ -295,6 +295,15 @@ async fn get_channel_stream(
         channel: path.channel.clone(),
     }).await??;
 
+    let stream = tuner_manager.send(StartStreamingMessage {
+        channel: channel.clone(),
+        user: user.clone(),
+    }).await??;
+
+    // stop_trigger must be created here in order to stop streaming when an error occurs.
+    let stop_trigger = TunerStreamStopTrigger::new(
+        stream.id(), tuner_manager.get_ref().clone().recipient());
+
     let data = mustache::MapBuilder::new()
         .insert_str("channel_name", &channel.name)
         .insert("channel_type", &channel.channel_type)?
@@ -304,22 +313,14 @@ async fn get_channel_stream(
     let mut builder = FilterPipelineBuilder::new(data);
     builder.add_pre_filters(
         &config.pre_filters, &filter_setting.pre_filters)?;
-    if filter_setting.decode {
+    if !stream.is_decoded() && filter_setting.decode {
         builder.add_decode_filter(&config.filters.decode_filter)?;
     }
     builder.add_post_filters(
         &config.post_filters, &filter_setting.post_filters)?;
     let (filters, content_type) = builder.build();
 
-    let stream = tuner_manager.send(StartStreamingMessage {
-        channel,
-        user: user.clone(),
-    }).await??;
-
-    let stop_triggers = vec![TunerStreamStopTrigger::new(
-        stream.id(), tuner_manager.get_ref().clone().recipient())];
-
-    streaming(&config, user, stream, filters, content_type, stop_triggers).await
+    streaming(&config, user, stream, filters, content_type, stop_trigger).await
 }
 
 #[actix_web::get("/channels/{channel_type}/{channel}/services/{sid}/stream")]
@@ -383,6 +384,15 @@ async fn get_program_stream(
         triple: service.triple(),
     }).await??;
 
+    let stream = tuner_manager.send(StartStreamingMessage {
+        channel: service.channel.clone(),
+        user: user.clone(),
+    }).await??;
+
+    // stream_stop_trigger must be created here in order to stop streaming when an error occurs.
+    let stream_stop_trigger = TunerStreamStopTrigger::new(
+        stream.id(), tuner_manager.get_ref().clone().recipient());
+
     let video_tags: Vec<u8> = program.video
         .iter()
         .map(|video| video.component_tag)
@@ -409,7 +419,7 @@ async fn get_program_stream(
     let mut builder = FilterPipelineBuilder::new(data);
     builder.add_pre_filters(&config.pre_filters, &filter_setting.pre_filters)?;
     builder.add_service_filter(&config.filters.service_filter)?;
-    if filter_setting.decode {
+    if !stream.is_decoded() && filter_setting.decode {
         builder.add_decode_filter(&config.filters.decode_filter)?;
     }
     builder.add_program_filter(&config.filters.program_filter)?;
@@ -417,21 +427,12 @@ async fn get_program_stream(
         &config.post_filters, &filter_setting.post_filters)?;
     let (filters, content_type) = builder.build();
 
-    let stream = tuner_manager.send(StartStreamingMessage {
-        channel: service.channel.clone(),
-        user: user.clone(),
-    }).await??;
-
-    let stop_trigger = airtime_tracker::track_airtime(
+    let tracker_stop_trigger = airtime_tracker::track_airtime(
         &config.recorder.track_airtime_command, &service.channel, &program,
         stream.id(), tuner_manager.get_ref().clone(), epg.get_ref().clone()
     ).await?;
 
-    let stop_triggers = vec![
-        TunerStreamStopTrigger::new(
-            stream.id(), tuner_manager.get_ref().clone().recipient()),
-        stop_trigger,
-    ];
+    let stop_triggers = vec![stream_stop_trigger, tracker_stop_trigger];
 
     let result =
         streaming(&config, user, stream, filters, content_type, stop_triggers).await;
@@ -508,6 +509,11 @@ async fn get_timeshift_stream(
         name: path.recorder.clone(),
     }).await??;
 
+    let (stream, stop_trigger) = timeshift_manager.send(StartTimeshiftStreamingMessage {
+        recorder_name: path.recorder.clone(),
+        record_id: stream_query.record,
+    }).await??;
+
     let data = mustache::MapBuilder::new()
         .insert_str("channel_name", &recorder.service.channel.name)
         .insert("channel_type", &recorder.service.channel.channel_type)?
@@ -518,17 +524,10 @@ async fn get_timeshift_stream(
     let mut builder = FilterPipelineBuilder::new(data);
     builder.add_pre_filters(
         &config.pre_filters, &filter_setting.pre_filters)?;
-    if filter_setting.decode {
-        builder.add_decode_filter(&config.filters.decode_filter)?;
-    }
+    // The stream has already been decoded.
     builder.add_post_filters(
         &config.post_filters, &filter_setting.post_filters)?;
     let (filters, content_type) = builder.build();
-
-    let (stream, stop_trigger) = timeshift_manager.send(StartTimeshiftStreamingMessage {
-        recorder_name: path.recorder.clone(),
-        record_id: stream_query.record,
-    }).await??;
 
     streaming(&config, user, stream, filters, content_type, stop_trigger).await
 }
@@ -549,6 +548,22 @@ async fn get_timeshift_record_stream(
     let record = timeshift_manager.send(QueryTimeshiftRecordMessage{
         recorder_name: path.recorder.clone(),
         record_id: path.record,
+    }).await??;
+
+    let start_pos = req
+        .headers()
+        .get(actix_web::http::header::RANGE)
+        .iter()
+        .flat_map(|header| header.to_str().ok())
+        .flat_map(|header| http_range::HttpRange::parse(header, record.size).ok())
+        .flat_map(|ranges| ranges.iter().cloned().next())
+        .map(|range| range.start)
+        .next();
+
+    let (stream, stop_trigger) = timeshift_manager.send(StartTimeshiftRecordStreamingMessage {
+        recorder_name: path.recorder.clone(),
+        record_id: path.record,
+        start_pos,
     }).await??;
 
     let video_tags: Vec<u8> = record.program.video
@@ -579,28 +594,10 @@ async fn get_timeshift_record_stream(
     let mut builder = FilterPipelineBuilder::new(data);
     builder.add_pre_filters(
         &config.pre_filters, &filter_setting.pre_filters)?;
-    if filter_setting.decode {
-        builder.add_decode_filter(&config.filters.decode_filter)?;
-    }
+    // The stream has already been decoded.
     builder.add_post_filters(
         &config.post_filters, &filter_setting.post_filters)?;
     let (filters, content_type) = builder.build();
-
-    let start_pos = req
-        .headers()
-        .get(actix_web::http::header::RANGE)
-        .iter()
-        .flat_map(|header| header.to_str().ok())
-        .flat_map(|header| http_range::HttpRange::parse(header, record.size).ok())
-        .flat_map(|ranges| ranges.iter().cloned().next())
-        .map(|range| range.start)
-        .next();
-
-    let (stream, stop_trigger) = timeshift_manager.send(StartTimeshiftRecordStreamingMessage {
-        recorder_name: path.recorder.clone(),
-        record_id: path.record,
-        start_pos,
-    }).await??;
 
     streaming(&config, user, stream, filters, content_type, stop_trigger).await
 }
@@ -739,6 +736,15 @@ async fn do_get_service_stream(
     user: TunerUser,
     filter_setting: FilterSetting,
 ) -> ApiResult {
+    let stream = tuner_manager.send(StartStreamingMessage {
+        channel: channel.clone(),
+        user: user.clone(),
+    }).await??;
+
+    // stop_trigger must be created here in order to stop streaming when an error occurs.
+    let stop_trigger = TunerStreamStopTrigger::new(
+        stream.id(), tuner_manager.get_ref().clone().recipient());
+
     let data = mustache::MapBuilder::new()
         .insert_str("channel_name", &channel.name)
         .insert("channel_type", &channel.channel_type)?
@@ -750,22 +756,14 @@ async fn do_get_service_stream(
     builder.add_pre_filters(
         &config.pre_filters, &filter_setting.pre_filters)?;
     builder.add_service_filter(&config.filters.service_filter)?;
-    if filter_setting.decode {
+    if !stream.is_decoded() && filter_setting.decode {
         builder.add_decode_filter(&config.filters.decode_filter)?;
     }
     builder.add_post_filters(
         &config.post_filters, &filter_setting.post_filters)?;
     let (filters, content_type) = builder.build();
 
-    let stream = tuner_manager.send(StartStreamingMessage {
-        channel,
-        user: user.clone(),
-    }).await??;
-
-    let stop_triggers = vec![TunerStreamStopTrigger::new(
-        stream.id(), tuner_manager.get_ref().clone().recipient())];
-
-    streaming(&config, user, stream, filters, content_type, stop_triggers).await
+    streaming(&config, user, stream, filters, content_type, stop_trigger).await
 }
 
 async fn streaming<T, S, D>(

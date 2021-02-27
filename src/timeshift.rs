@@ -135,6 +135,7 @@ impl TimeshiftManager {
         activation: &TimeshiftActivation,
     ) -> Result<TimeshiftRecorderSession, Error> {
         let config = activation.config.timeshift.get(&activation.name).unwrap();
+        let channel = &activation.service.channel;
 
         let user = TunerUser {
             info: TunerUserInfo::Recorder {
@@ -143,7 +144,15 @@ impl TimeshiftManager {
             priority: config.priority.into(),
         };
 
-        let channel = &activation.service.channel;
+        let stream = activation.tuner_manager.send(StartStreamingMessage {
+            channel: channel.clone(),
+            user,
+        }).await??;
+
+        // stop_trigger must be created here in order to stop streaming when an error occurs.
+        let stop_trigger = TunerStreamStopTrigger::new(
+            stream.id(), activation.tuner_manager.clone().recipient());
+
         let data = mustache::MapBuilder::new()
             .insert_str("channel_name", &channel.name)
             .insert("channel_type", &channel.channel_type)?
@@ -154,12 +163,14 @@ impl TimeshiftManager {
         builder.add_service_filter(&activation.config.filters.service_filter)?;
         // NOTE
         // ----
-        // We don't add the decode filter here for efficiency reasons.  Because users probably
-        // don't watch all of the recorded TV programs.  Therefore, it's more efficient to decode
-        // a TV program when streaming it.
-        //
-        // In addition, some of the users decodes the TS stream in the tuner command.  In this
-        // case, there is no need to decode at all.
+        // We always decode stream before recording in order to make it easy to support seeking.
+        // It's impossible to decode stream started from any position in the record.  Only streams
+        // starting with PAT packets can be decoded.  This means that we need to seek a PAT
+        // packet before streaming and we cannot start streaming from a specific position that
+        // is specified by the media player using a HTTP Range header.
+        if !stream.is_decoded() {
+            builder.add_decode_filter(&activation.config.filters.decode_filter)?;
+        }
         let (mut cmds, _) = builder.build();
 
         let data = mustache::MapBuilder::new()
@@ -172,14 +183,6 @@ impl TimeshiftManager {
         let template = mustache::compile_str(
             &activation.config.recorder.record_service_command)?;
         cmds.push(template.render_data_to_string(&data)?);
-
-        let stream = activation.tuner_manager.send(StartStreamingMessage {
-            channel: channel.clone(),
-            user,
-        }).await??;
-
-        let stop_trigger = TunerStreamStopTrigger::new(
-            stream.id(), activation.tuner_manager.clone().recipient());
 
         let mut pipeline = spawn_pipeline(cmds, stream.id())?;
 
@@ -904,7 +907,7 @@ impl TimeshiftStreamSource {
         reader.set_position(self.point.pos).await?;
         let stream = ChunkStream::new(reader, Self::CHUNK_SIZE);
         let id = format!("timeshift({})", self.name);
-        Ok((MpegTsStream::new(id, stream), stop_trigger))
+        Ok((MpegTsStream::new(id, stream).decoded(), stop_trigger))
     }
 }
 
@@ -929,7 +932,7 @@ impl TimeshiftRecordStreamSource {
         reader.set_position(self.start).await?;
         let stream = ChunkStream::new(reader.take(self.range.bytes()), Self::CHUNK_SIZE);
         let id = format!("timeshift({})/record#{}", self.recorder_name, self.id);
-        Ok((MpegTsStream::with_range(id, stream, self.range), stop_trigger))
+        Ok((MpegTsStream::with_range(id, stream, self.range).decoded(), stop_trigger))
     }
 }
 

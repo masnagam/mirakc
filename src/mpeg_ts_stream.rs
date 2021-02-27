@@ -12,15 +12,25 @@ pub struct MpegTsStream<T, S> {
     id: T,
     stream: S,
     range: Option<MpegTsStreamRange>,
+    decoded: bool,
 }
 
 impl<T, S> MpegTsStream<T, S> {
     pub fn new(id: T, stream: S) -> Self {
-        MpegTsStream { id, stream, range: None, }
+        MpegTsStream { id, stream, decoded: false, range: None, }
     }
 
     pub fn with_range(id: T, stream: S, range: MpegTsStreamRange) -> Self {
-        MpegTsStream { id, stream, range: Some(range), }
+        MpegTsStream { id, stream, decoded: false, range: Some(range), }
+    }
+
+    pub fn decoded(mut self) -> Self {
+        self.decoded = true;
+        self
+    }
+
+    pub fn is_decoded(&self) -> bool {
+        self.decoded
     }
 
     pub fn range(&self) -> Option<MpegTsStreamRange> {
