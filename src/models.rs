@@ -7,7 +7,6 @@ use serde::{Deserialize, Serialize};
 use crate::datetime_ext::{serde_jst, serde_duration_in_millis, Jst};
 use crate::eit_feeder::{AudioComponentDescriptor, ComponentDescriptor };
 use crate::epg::{EpgChannel, EpgService, EpgProgram};
-use crate::timeshift::{TimeshiftRecorderModel, TimeshiftRecordModel};
 use crate::tuner::TunerSubscriptionId;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -681,58 +680,6 @@ impl MirakurunProgramAudio {
 impl From<AudioComponentDescriptor> for MirakurunProgramAudio {
     fn from(audio: AudioComponentDescriptor) -> Self {
         Self::new(audio.sampling_rate, audio.component_type)
-    }
-}
-
-// timeshift record
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct MirakurunTimeshiftRecorder {
-    pub name: String,
-    pub service: MirakurunService,
-    #[serde(with = "serde_jst")]
-    pub start_time: DateTime<Jst>,
-    #[serde(with = "serde_duration_in_millis")]
-    pub duration: Duration,
-    pub recording: bool,
-}
-
-impl From<TimeshiftRecorderModel> for MirakurunTimeshiftRecorder {
-    fn from(model: TimeshiftRecorderModel) -> Self {
-        Self {
-            name: model.name,
-            service: model.service.into(),
-            start_time: model.start_time.clone(),
-            duration: model.end_time - model.start_time,
-            recording: model.recording,
-        }
-    }
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct MirakurunTimeshiftRecord {
-    pub id: TimeshiftRecordId,
-    pub program: MirakurunProgram,
-    #[serde(with = "serde_jst")]
-    pub start_time: DateTime<Jst>,
-    #[serde(with = "serde_duration_in_millis")]
-    pub duration: Duration,
-    pub size: u64,
-    pub recording: bool,
-}
-
-impl From<TimeshiftRecordModel> for MirakurunTimeshiftRecord {
-    fn from(model: TimeshiftRecordModel) -> Self {
-        Self {
-            id: model.id,
-            program: model.program.into(),
-            start_time: model.start_time.clone(),
-            duration: model.end_time - model.start_time,
-            size: model.size,
-            recording: model.recording,
-        }
     }
 }
 

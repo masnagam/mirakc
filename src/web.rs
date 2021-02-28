@@ -4,13 +4,13 @@ use std::io;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::pin::Pin;
 use std::sync::Arc;
-use std::time::Duration;
 
 use actix::prelude::*;
 use actix_files;
 use actix_service;
 use actix_web::{self, FromRequest};
 use actix_web::web::{Bytes, BytesMut};
+use chrono::{DateTime, Duration};
 use futures;
 use futures::stream::{Stream, StreamExt};
 use serde::{Deserialize, Serialize};
@@ -21,7 +21,7 @@ use crate::airtime_tracker;
 use crate::chunk_stream::ChunkStream;
 use crate::command_util::*;
 use crate::config::{Config, ServerAddr};
-use crate::datetime_ext::Jst;
+use crate::datetime_ext::{serde_jst, serde_duration_in_millis, Jst};
 use crate::error::Error;
 use crate::epg::*;
 use crate::filter::*;
@@ -452,8 +452,8 @@ async fn get_timeshift_recorders(
 ) -> ApiResult {
     timeshift_manager.send(QueryTimeshiftRecordersMessage).await?
         .map(|recorders| recorders.into_iter()
-             .map(MirakurunTimeshiftRecorder::from)
-             .collect::<Vec<MirakurunTimeshiftRecorder>>())
+             .map(WebTimeshiftRecorder::from)
+             .collect::<Vec<WebTimeshiftRecorder>>())
         .map(|recorders| actix_web::HttpResponse::Ok().json(recorders))
 }
 
@@ -465,7 +465,7 @@ async fn get_timeshift_recorder(
     timeshift_manager.send(QueryTimeshiftRecorderMessage {
         name: path.recorder.clone(),
     }).await?
-        .map(MirakurunTimeshiftRecorder::from)
+        .map(WebTimeshiftRecorder::from)
         .map(|recorder| actix_web::HttpResponse::Ok().json(recorder))
 }
 
@@ -478,8 +478,8 @@ async fn get_timeshift_records(
         recorder_name: path.recorder.clone(),
     }).await?
         .map(|records| records.into_iter()
-             .map(MirakurunTimeshiftRecord::from)
-             .collect::<Vec<MirakurunTimeshiftRecord>>())
+             .map(WebTimeshiftRecord::from)
+             .collect::<Vec<WebTimeshiftRecord>>())
         .map(|records| actix_web::HttpResponse::Ok().json(records))
 }
 
@@ -492,7 +492,7 @@ async fn get_timeshift_record(
         recorder_name: path.recorder.clone(),
         record_id: path.record,
     }).await?
-        .map(MirakurunTimeshiftRecord::from)
+        .map(WebTimeshiftRecord::from)
         .map(|record| actix_web::HttpResponse::Ok().json(record))
 }
 
@@ -860,7 +860,7 @@ where
     // streaming pipeline.
     let mut peekable = stream.peekable();
     let fut = Pin::new(&mut peekable).peek();
-    match tokio::time::timeout(Duration::from_millis(time_limit), fut).await {
+    match tokio::time::timeout(std::time::Duration::from_millis(time_limit), fut).await {
         Ok(None) => {
             // No packets come from the pipeline, maybe the program has been
             // canceled.
@@ -1174,6 +1174,78 @@ impl<'a> std::fmt::Display for Escape<'a> {
             fmt.write_str(&pile_o_bits[last..])?;
         }
         Ok(())
+    }
+}
+
+// data models
+
+// timeshift record
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WebTimeshiftRecorder {
+    name: String,
+    service: MirakurunService,
+    #[serde(with = "serde_jst")]
+    start_time: DateTime<Jst>,
+    #[serde(with = "serde_duration_in_millis")]
+    duration: Duration,
+    pipeline: Vec<WebProcessModel>,
+    recording: bool,
+}
+
+impl From<TimeshiftRecorderModel> for WebTimeshiftRecorder {
+    fn from(model: TimeshiftRecorderModel) -> Self {
+        Self {
+            name: model.name,
+            service: model.service.into(),
+            start_time: model.start_time.clone(),
+            duration: model.end_time - model.start_time,
+            pipeline: model.pipeline.into_iter().map(WebProcessModel::from).collect(),
+            recording: model.recording,
+        }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WebProcessModel {
+    command: String,
+    pid: u32,
+}
+
+impl From<CommandPipelineProcessModel> for WebProcessModel {
+    fn from(model: CommandPipelineProcessModel) -> Self {
+        Self {
+            command: model.command,
+            pid: model.pid,
+        }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WebTimeshiftRecord {
+    id: TimeshiftRecordId,
+    program: MirakurunProgram,
+    #[serde(with = "serde_jst")]
+    start_time: DateTime<Jst>,
+    #[serde(with = "serde_duration_in_millis")]
+    duration: Duration,
+    size: u64,
+    recording: bool,
+}
+
+impl From<TimeshiftRecordModel> for WebTimeshiftRecord {
+    fn from(model: TimeshiftRecordModel) -> Self {
+        Self {
+            id: model.id,
+            program: model.program.into(),
+            start_time: model.start_time.clone(),
+            duration: model.end_time - model.start_time,
+            size: model.size,
+            recording: model.recording,
+        }
     }
 }
 
@@ -1778,6 +1850,7 @@ mod tests {
                         },
                         start_time: Jst::now(),
                         end_time: Jst::now(),
+                        pipeline: vec![],
                         recording: true,
                     })
                 } else {

@@ -146,6 +146,16 @@ where
         Ok(())
     }
 
+    pub fn get_model(&self) -> Vec<CommandPipelineProcessModel> {
+        self.commands
+            .iter()
+            .map(|data| CommandPipelineProcessModel {
+                command: data.command.clone(),
+                pid: data.process.id(),
+            })
+            .collect()
+    }
+
     pub fn pids(&self) -> Vec<u32> {
         self.commands
             .iter()
@@ -191,6 +201,11 @@ where
                         self.id, data.process.id(), data.command);
         }
     }
+}
+
+pub struct CommandPipelineProcessModel {
+    pub command: String,
+    pub pid: u32,
 }
 
 // input-side endpoint
