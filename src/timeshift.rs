@@ -24,7 +24,9 @@ use crate::filter::*;
 use crate::models::*;
 use crate::mpeg_ts_stream::*;
 use crate::tuner::*;
-use crate::command_util::{spawn_pipeline, CommandPipeline, CommandPipelineProcessModel};
+use crate::command_util::{
+    spawn_pipeline, CommandPipeline, CommandPipelineOutput, CommandPipelineProcessModel,
+};
 
 pub fn start(
     config: Arc<Config>,
@@ -108,6 +110,29 @@ impl Handler<QueryTimeshiftRecordersMessage> for TimeshiftManager {
     }
 }
 
+macro_rules! impl_proxy_handler {
+    ($msg:ident, $result:path) => {
+        impl Handler<$msg> for TimeshiftManager {
+            type Result = ResponseFuture<$result>;
+
+            fn handle(
+                &mut self,
+                msg: $msg,
+                _ctx: &mut Self::Context,
+            ) -> Self::Result {
+                log::debug!("{}", msg);
+                let maybe_recorder = self.recorders
+                    .get(&msg.recorder_name)
+                    .cloned()
+                    .ok_or(Error::RecordNotFound);
+                Box::pin(async move {
+                    maybe_recorder?.send(msg).await?
+                })
+            }
+        }
+    }
+}
+
 #[derive(Message)]
 #[rtype(result = "Result<TimeshiftRecorderModel, Error>")]
 pub struct QueryTimeshiftRecorderMessage {
@@ -120,24 +145,7 @@ impl fmt::Display for QueryTimeshiftRecorderMessage {
     }
 }
 
-impl Handler<QueryTimeshiftRecorderMessage> for TimeshiftManager {
-    type Result = ResponseFuture<Result<TimeshiftRecorderModel, Error>>;
-
-    fn handle(
-        &mut self,
-        msg: QueryTimeshiftRecorderMessage,
-        _: &mut Self::Context,
-    ) -> Self::Result {
-        log::debug!("{}", msg);
-        let maybe_recorder = self.recorders
-            .get(&msg.recorder_name)
-            .cloned()
-            .ok_or(Error::RecordNotFound);
-        Box::pin(async move {
-            maybe_recorder?.send(msg).await?
-        })
-    }
-}
+impl_proxy_handler!(QueryTimeshiftRecorderMessage, Result<TimeshiftRecorderModel, Error>);
 
 #[derive(Message)]
 #[rtype(result = "Result<Vec<TimeshiftRecordModel>, Error>")]
@@ -151,25 +159,7 @@ impl fmt::Display for QueryTimeshiftRecordsMessage {
     }
 }
 
-impl Handler<QueryTimeshiftRecordsMessage> for TimeshiftManager {
-    type Result = ResponseFuture<Result<Vec<TimeshiftRecordModel>, Error>>;
-
-    fn handle(
-        &mut self,
-        msg: QueryTimeshiftRecordsMessage,
-        _: &mut Self::Context,
-    ) -> Self::Result {
-        log::debug!("{}", msg);
-        let maybe_recorder = self.recorders
-            .get(&msg.recorder_name)
-            .cloned()
-            .ok_or(Error::RecordNotFound);
-        Box::pin(async move {
-            maybe_recorder?.send(msg).await?
-        })
-    }
-}
-
+impl_proxy_handler!(QueryTimeshiftRecordsMessage, Result<Vec<TimeshiftRecordModel>, Error>);
 
 #[derive(Message)]
 #[rtype(result = "Result<TimeshiftRecordModel, Error>")]
@@ -185,24 +175,7 @@ impl fmt::Display for QueryTimeshiftRecordMessage {
     }
 }
 
-impl Handler<QueryTimeshiftRecordMessage> for TimeshiftManager {
-    type Result = ResponseFuture<Result<TimeshiftRecordModel, Error>>;
-
-    fn handle(
-        &mut self,
-        msg: QueryTimeshiftRecordMessage,
-        _: &mut Self::Context,
-    ) -> Self::Result {
-        log::debug!("{}", msg);
-        let maybe_recorder = self.recorders
-            .get(&msg.recorder_name)
-            .cloned()
-            .ok_or(Error::RecordNotFound);
-        Box::pin(async move {
-            maybe_recorder?.send(msg).await?
-        })
-    }
-}
+impl_proxy_handler!(QueryTimeshiftRecordMessage, Result<TimeshiftRecordModel, Error>);
 
 #[derive(Message)]
 #[rtype(result = "Result<(TimeshiftStream, TimeshiftStreamStopTrigger), Error>")]
@@ -222,24 +195,9 @@ impl fmt::Display for StartTimeshiftStreamingMessage {
     }
 }
 
-impl Handler<StartTimeshiftStreamingMessage> for TimeshiftManager {
-    type Result = ResponseFuture<Result<(TimeshiftStream, TimeshiftStreamStopTrigger), Error>>;
-
-    fn handle(
-        &mut self,
-        msg: StartTimeshiftStreamingMessage,
-        _: &mut Self::Context,
-    ) -> Self::Result {
-        log::debug!("{}", msg);
-        let maybe_recorder = self.recorders
-            .get(&msg.recorder_name)
-            .cloned()
-            .ok_or(Error::RecordNotFound);
-        Box::pin(async move {
-            maybe_recorder?.send(msg).await?
-        })
-    }
-}
+impl_proxy_handler!(
+    StartTimeshiftStreamingMessage,
+    Result<(TimeshiftStream, TimeshiftStreamStopTrigger), Error>);
 
 #[derive(Message)]
 #[rtype(result = "Result<(TimeshiftRecordStream, TimeshiftStreamStopTrigger), Error>")]
@@ -261,31 +219,9 @@ impl fmt::Display for StartTimeshiftRecordStreamingMessage {
     }
 }
 
-impl Handler<StartTimeshiftRecordStreamingMessage> for TimeshiftManager {
-    type Result =
-        ResponseFuture<Result<(TimeshiftRecordStream, TimeshiftStreamStopTrigger), Error>>;
-
-    fn handle(
-        &mut self,
-        msg: StartTimeshiftRecordStreamingMessage,
-        _: &mut Self::Context,
-    ) -> Self::Result {
-        log::debug!("{}", msg);
-        let maybe_recorder = self.recorders
-            .get(&msg.recorder_name)
-            .cloned()
-            .ok_or(Error::RecordNotFound);
-        Box::pin(async move {
-            maybe_recorder?.send(msg).await?
-        })
-    }
-}
-
-impl fmt::Display for NotifyServicesUpdatedMessage {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "NotifyServicesUpdated")
-    }
-}
+impl_proxy_handler!(
+    StartTimeshiftRecordStreamingMessage,
+    Result<(TimeshiftRecordStream, TimeshiftStreamStopTrigger), Error>);
 
 impl Handler<NotifyServicesUpdatedMessage> for TimeshiftManager {
     type Result = ();
@@ -361,9 +297,9 @@ impl TimeshiftRecorder {
 
     fn deactivate(&mut self) {
         if self.session.is_some() {
-            log::warn!("{}: deactivated, but inactive", self.name);
+            log::warn!("{}: Deactivated, but inactive", self.name);
         } else {
-            log::info!("{}: deactivated", self.name);
+            log::info!("{}: Deactivated", self.name);
         }
         self.session = None;
     }
@@ -532,7 +468,7 @@ impl TimeshiftRecorder {
 
     async fn activate(
         activation: TimeshiftActivation,
-    ) -> Result<TimeshiftRecorderSession, Error> {
+    ) -> Result<TimeshiftActivationResult, Error> {
         let config = activation.config.timeshift.get(&activation.name).unwrap();
         let channel = &activation.service.channel;
 
@@ -591,33 +527,12 @@ impl TimeshiftRecorder {
             let _ = stream.pipe(input).await;
         });
 
-        let recorder = activation.recorder.clone();
-        actix::spawn(async move {
-            match Self::forward_messages(&recorder, output).await {
-                Ok(_) => (),
-                Err(err) => log::error!("{}", err),
-            }
-            recorder.do_send(NotifyTimeshiftRecordingPipelineBrokenMessage);
-        });
-
-        Ok(TimeshiftRecorderSession {
+        let session = TimeshiftRecorderSession {
             pipeline,
             _stop_trigger: stop_trigger,
-        })
-    }
+        };
 
-    async fn forward_messages<T: AsyncRead + Unpin>(
-        recorder: &Addr<Self>,
-        output: T,
-    ) -> Result<(), Error> {
-        let mut reader = BufReader::new(output);
-        let mut json = String::new();
-        while reader.read_line(&mut json).await? > 0 {
-            let msg = serde_json::from_str::<TimeshiftMessage>(&json)?;
-            recorder.do_send(msg);
-            json.clear();
-        }
-        Ok(())
+        Ok(TimeshiftActivationResult { session, output })
     }
 }
 
@@ -668,27 +583,29 @@ impl Handler<ActivateTimeshiftRecorderMessage> for TimeshiftRecorder {
     ) -> Self::Result {
         self.service = msg.service;
         if self.session.is_none() {
+            log::info!("{}: Start activation", self.name);
             let activation = TimeshiftActivation {
                 config: self.config.clone(),
                 name: self.name.clone(),
                 service: self.service.clone(),
                 tuner_manager: msg.tuner_manager.clone(),
-                recorder: ctx.address(),
             };
             Self::activate(activation)
                 .into_actor(self)
-                .map(|result, this, _ctx| {
+                .map(|result, this, ctx| {
                     match result {
-                        Ok(session) => {
-                            log::debug!("{}: Activated", this.name);
-                            this.session = Some(session);
+                        Ok(result) => {
+                            log::debug!("{}: Activation finished successfully", this.name);
+                            this.session = Some(result.session);
+                            let reader = BufReader::new(result.output);
+                            Self::add_stream(reader.lines(), ctx);
                         }
                         Err(err) => {
                             log::error!("{}: Activation failed: {}", this.name, err);
                         }
                     }
                 })
-                .wait(ctx);
+                .wait(ctx);  // blocks until the activation finished
         } else {
             log::info!("{}: Already activated", self.name);
         }
@@ -803,38 +720,39 @@ impl Handler<NotifyTimeshiftRecordingPipelineBrokenMessage> for TimeshiftRecorde
     }
 }
 
-#[derive(Message)]
-#[rtype(result = "()")]
-#[derive(Deserialize)]
-#[serde(rename_all = "kebab-case")]
-#[serde(tag = "type", content = "data")]
-enum TimeshiftMessage {
-    Start(TimeshiftStartMessage),
-    Stop(TimeshiftStopMessage),
-    Chunk(TimeshiftChunkMessage),
-    EventStart(TimeshiftEventMessage),
-    EventUpdate(TimeshiftEventMessage),
-    EventEnd(TimeshiftEventMessage),
-}
+impl StreamHandler<io::Result<String>> for TimeshiftRecorder {
+    fn handle(&mut self, line: io::Result<String>, _ctx: &mut actix::Context<Self>) {
+        let json = match line {
+            Ok(json) => json,
+            Err(err) => {
+                log::error!("{}: Failed reading output from the command pipeline: {}",
+                            self.name, err);
+                return;
+            }
+        };
 
-impl Handler<TimeshiftMessage> for TimeshiftRecorder {
-    type Result = MessageResult<TimeshiftMessage>;
+        let msg = match serde_json::from_str::<TimeshiftRecorderMessage>(&json) {
+            Ok(msg) => msg,
+            Err(err) => {
+                log::error!("{}: Failed parsing a JSON message: {}", self.name, err);
+                return;
+            }
+        };
 
-    fn handle(&mut self, msg: TimeshiftMessage, _: &mut Self::Context) -> Self::Result {
         match msg {
-            TimeshiftMessage::Start(msg) => {
+            TimeshiftRecorderMessage::Start(msg) => {
                 debug_assert_eq!(self.name, msg.id);
                 self.handle_start_recording();
             }
-            TimeshiftMessage::Stop(msg) => {
+            TimeshiftRecorderMessage::Stop(msg) => {
                 debug_assert_eq!(self.name, msg.id);
                 self.handle_stop_recording(msg.reset);
             }
-            TimeshiftMessage::Chunk(msg) => {
+            TimeshiftRecorderMessage::Chunk(msg) => {
                 debug_assert_eq!(self.name, msg.id);
                 self.handle_chunk(msg.chunk);
             }
-            TimeshiftMessage::EventStart(msg) => {
+            TimeshiftRecorderMessage::EventStart(msg) => {
                 debug_assert_eq!(self.name, msg.id);
                 let quad = EventQuad::new(
                     msg.original_network_id,
@@ -843,7 +761,7 @@ impl Handler<TimeshiftMessage> for TimeshiftRecorder {
                     msg.event.event_id);
                 self.handle_event_start(quad, msg.event, msg.record);
             }
-            TimeshiftMessage::EventUpdate(msg) => {
+            TimeshiftRecorderMessage::EventUpdate(msg) => {
                 debug_assert_eq!(self.name, msg.id);
                 let quad = EventQuad::new(
                     msg.original_network_id,
@@ -852,7 +770,7 @@ impl Handler<TimeshiftMessage> for TimeshiftRecorder {
                     msg.event.event_id);
                 self.handle_event_update(quad, msg.event, msg.record);
             }
-            TimeshiftMessage::EventEnd(msg) => {
+            TimeshiftRecorderMessage::EventEnd(msg) => {
                 debug_assert_eq!(self.name, msg.id);
                 let quad = EventQuad::new(
                     msg.original_network_id,
@@ -862,64 +780,49 @@ impl Handler<TimeshiftMessage> for TimeshiftRecorder {
                 self.handle_event_end(quad, msg.event, msg.record);
             }
         }
-        MessageResult(())
+    }
+
+    fn finished(&mut self, _ctx: &mut actix::Context<Self>) {
+        log::info!("{}: Recoding pipeline broken, deactivate", self.name);
+        self.deactivate();
     }
 }
 
-struct TimeshiftRecorderSession {
-    pipeline: CommandPipeline<TunerSubscriptionId>,
-    _stop_trigger: TunerStreamStopTrigger,
-}
-
-struct TimeshiftActivation {
-    config: Arc<Config>,
-    name: String,
-    service: EpgService,
-    tuner_manager: Addr<TunerManager>,
-    recorder: Addr<TimeshiftRecorder>,
-}
-
-pub struct TimeshiftRecorderModel {
-    pub name: String,
-    pub service: EpgService,
-    pub start_time: DateTime<Jst>,
-    pub end_time: DateTime<Jst>,
-    pub pipeline: Vec<CommandPipelineProcessModel>,
-    pub recording: bool,
-}
-
-pub struct TimeshiftRecordModel {
-    pub id: TimeshiftRecordId,
-    pub program: EpgProgram,
-    pub start_time: DateTime<Jst>,
-    pub end_time: DateTime<Jst>,
-    pub size: u64,
-    pub recording: bool,
+#[derive(Deserialize)]
+#[serde(rename_all = "kebab-case")]
+#[serde(tag = "type", content = "data")]
+enum TimeshiftRecorderMessage {
+    Start(TimeshiftRecorderStartMessage),
+    Stop(TimeshiftRecorderStopMessage),
+    Chunk(TimeshiftRecorderChunkMessage),
+    EventStart(TimeshiftRecorderEventMessage),
+    EventUpdate(TimeshiftRecorderEventMessage),
+    EventEnd(TimeshiftRecorderEventMessage),
 }
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct TimeshiftStartMessage {
+struct TimeshiftRecorderStartMessage {
     id: String,
 }
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct TimeshiftStopMessage {
+struct TimeshiftRecorderStopMessage {
     id: String,
     reset: bool,
 }
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct TimeshiftChunkMessage {
+struct TimeshiftRecorderChunkMessage {
     id: String,
     chunk: TimeshiftPoint,
 }
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct TimeshiftEventMessage {
+struct TimeshiftRecorderEventMessage {
     id: String,
     original_network_id: NetworkId,
     transport_stream_id: TransportStreamId,
@@ -941,6 +844,23 @@ impl fmt::Display for TimeshiftPoint {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}@{}", self.timestamp, self.pos)
     }
+}
+
+struct TimeshiftRecorderSession {
+    pipeline: CommandPipeline<TunerSubscriptionId>,
+    _stop_trigger: TunerStreamStopTrigger,
+}
+
+struct TimeshiftActivation {
+    config: Arc<Config>,
+    name: String,
+    service: EpgService,
+    tuner_manager: Addr<TunerManager>,
+}
+
+struct TimeshiftActivationResult {
+    session: TimeshiftRecorderSession,
+    output: CommandPipelineOutput<TunerSubscriptionId>,
 }
 
 #[derive(Clone)]
@@ -1017,6 +937,9 @@ impl TimeshiftRecord {
     }
 }
 
+// 32 KiB, large enough for 10 ms buffering.
+const CHUNK_SIZE: usize = 4096 * 8;
+
 struct TimeshiftStreamSource {
     name: String,
     file: String,
@@ -1024,16 +947,13 @@ struct TimeshiftStreamSource {
 }
 
 impl TimeshiftStreamSource {
-    // 32 KiB, large enough for 10 ms buffering.
-    const CHUNK_SIZE: usize = 4096 * 8;
-
     async fn create_stream(
         self
     ) -> Result<(TimeshiftStream, TimeshiftStreamStopTrigger), Error> {
         log::debug!("{}: Start live streaming from {}", self.name, self.point);
         let (mut reader, stop_trigger) = TimeshiftFileReader::open(&self.file).await?;
         reader.set_position(self.point.pos).await?;
-        let stream = ChunkStream::new(reader, Self::CHUNK_SIZE);
+        let stream = ChunkStream::new(reader, CHUNK_SIZE);
         let id = format!("timeshift({})", self.name);
         Ok((MpegTsStream::new(id, stream).decoded(), stop_trigger))
     }
@@ -1048,9 +968,6 @@ struct TimeshiftRecordStreamSource {
 }
 
 impl TimeshiftRecordStreamSource {
-    // 32 KiB, large enough for 10 ms buffering.
-    const CHUNK_SIZE: usize = 4096 * 8;
-
     async fn create_stream(
         self
     ) -> Result<(TimeshiftRecordStream, TimeshiftStreamStopTrigger), Error> {
@@ -1058,7 +975,7 @@ impl TimeshiftRecordStreamSource {
                     self.recorder_name, self.range.bytes(), self.id, self.start);
         let (mut reader, stop_trigger) = TimeshiftFileReader::open(&self.file).await?;
         reader.set_position(self.start).await?;
-        let stream = ChunkStream::new(reader.take(self.range.bytes()), Self::CHUNK_SIZE);
+        let stream = ChunkStream::new(reader.take(self.range.bytes()), CHUNK_SIZE);
         let id = format!("timeshift({})/record#{}", self.recorder_name, self.id);
         Ok((MpegTsStream::with_range(id, stream, self.range).decoded(), stop_trigger))
     }
@@ -1172,6 +1089,24 @@ impl Drop for TimeshiftStreamStopTrigger {
     fn drop(&mut self) {
         let _ = self.0.take().unwrap().send(());
     }
+}
+
+pub struct TimeshiftRecorderModel {
+    pub name: String,
+    pub service: EpgService,
+    pub start_time: DateTime<Jst>,
+    pub end_time: DateTime<Jst>,
+    pub pipeline: Vec<CommandPipelineProcessModel>,
+    pub recording: bool,
+}
+
+pub struct TimeshiftRecordModel {
+    pub id: TimeshiftRecordId,
+    pub program: EpgProgram,
+    pub start_time: DateTime<Jst>,
+    pub end_time: DateTime<Jst>,
+    pub size: u64,
+    pub recording: bool,
 }
 
 #[cfg(test)]
