@@ -29,12 +29,12 @@ Broadcaster
 mirakc has a pipeline to process MPEG-TS packets.
 
 ```
-+------------ CommandPipeline ----------------+
-| tuner-command (external process)            |
-|   |                                         |
-|   V                                         |
-| tuner-filter (external process) [optional]  |
-+---|-----------------------------------------+
++------------ CommandPipeline ---------------+
+| tuner-command (external process)           |
+|   |                                        |
+|   V                                        |
+| tuner-filter (external process) [optional] |
++---|----------------------------------------+
     |
 +---V------ Broadcaster -----------------+
 | tokio::sync::mpsc::channel (as buffer) |
@@ -87,3 +87,84 @@ The `web-buffer` can be tuned by the following configuration properties:
 
 See also the Japanese discussion on
 [issues/18](https://github.com/mirakc/mirakc/issues/18).
+
+## Timeshift Recording
+
+The timeshift recording consists of the following pipeline.
+
+```
++------------ CommandPipeline ----------------+
+| tuner-command (external process)            |
+|   |                                         |
+|   V                                         |
+| tuner-filter (external process) [optional]  |
++---|-----------------------------------------+
+    |
++---V------ Broadcaster -----------------+
+| tokio::sync::mpsc::channel (as buffer) |
++---|------------------------------------+
+    V
+  MpegTsStream
+    |
++---V--------- CommandPipeline -------+
+| service-filter (external process)   |
+|   |                                 |
+|   V                                 |
+| decode-filter (external process)    |
+|   |                                 |
+|   V                                 |
+| service-recorder (external process) |
+|   | |                               |
+|   | |<TS Packets>                   |
+|   | |                               |
+|   | +--> config.timeshift[].file    |
+|   |      (fixed-size ring buffer)   |
++---|---------------------------------+
+    |
+    |<JSON Messages>
+    |
+    V
+  TimeshiftRecorder (Actor)
+```
+
+The `service-recorder` command writes filtered TS packets into the timeshift
+record file and outputs JSON messages to STDOUT.
+
+The `TimeshiftRecorder` actor receives the JSON messages from the
+`service-recorder` command, and update internal information about records of
+TV programs in the timeshift file.
+
+The timeshift file is divided into chunks whose size is specified with
+`config.timeshift[].chunk-size`.  The maximum number of chunks is specified with
+`config.timeshift[].num-chunks`.  Therefore, the maximum size of the timeshift
+file is fixed.
+
+```
+Timeshift File (Max Size = chunk-size * num-chunks)
++------------------------------------------------------------------------------+
+| Chunk#0 | Chunk#1 | ...                             | Chunk#<num-chunks - 1> |
++------------------------------------------------------------------------------+
+```
+
+It's recommended to create the timeshift file with the maximum size before
+starting mirakc if you like to avoid write errors due to insufficient disk space:
+
+```shell
+fallocate -l $(expr <chunk-size> \* <num-chunks>) /path/to/timeshift.m2ts
+```
+
+A buffer used inside the system library is flushed when the file position
+reaches the boundary between the current chunk and the next chunk.
+
+The `TimeshiftRecorder` actor manages the chunks based on JSOM messages from the
+`service-recorder` command.  A chunk currently written and following
+`config.timeshift[].num-reserves` chunks are never supplied for streaming.
+
+```
+Timeshift File
++------------------------------------------------------------------------------+
+| Chunk#0 | Chunk#1 | Chunk#2 | ... | Chunk#<2 + num-reserves> |   Chunks...   |
+|      (ready)      |   A     |         (reserve)              |    (ready)    |
++-----------------------|------------------------------------------------------+
+                     <File Position>
+```

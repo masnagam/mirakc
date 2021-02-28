@@ -463,7 +463,7 @@ async fn get_timeshift_recorder(
     path: actix_web::web::Path<TimeshiftRecorderPath>,
 ) -> ApiResult {
     timeshift_manager.send(QueryTimeshiftRecorderMessage {
-        name: path.recorder.clone(),
+        recorder_name: path.recorder.clone(),
     }).await?
         .map(WebTimeshiftRecorder::from)
         .map(|recorder| actix_web::HttpResponse::Ok().json(recorder))
@@ -506,7 +506,7 @@ async fn get_timeshift_stream(
     filter_setting: FilterSetting,
 ) -> ApiResult {
     let recorder = timeshift_manager.send(QueryTimeshiftRecorderMessage {
-        name: path.recorder.clone(),
+        recorder_name: path.recorder.clone(),
     }).await??;
 
     let (stream, stop_trigger) = timeshift_manager.send(StartTimeshiftStreamingMessage {
@@ -542,7 +542,7 @@ async fn get_timeshift_record_stream(
     filter_setting: FilterSetting,
 ) -> ApiResult {
     let recorder = timeshift_manager.send(QueryTimeshiftRecorderMessage {
-        name: path.recorder.clone(),
+        recorder_name: path.recorder.clone(),
     }).await??;
 
     let record = timeshift_manager.send(QueryTimeshiftRecordMessage{
@@ -1828,7 +1828,7 @@ mod tests {
                 Box::<Option<Result<Vec<TimeshiftRecorderModel>, Error>>>::new(
                     Some(Ok(Vec::new())))
             } else if let Some(msg) = msg.downcast_ref::<QueryTimeshiftRecorderMessage>() {
-                let result = if msg.name == "test" {
+                let result = if msg.recorder_name == "test" {
                     Ok(TimeshiftRecorderModel {
                         name: "test".to_string(),
                         service: EpgService {
