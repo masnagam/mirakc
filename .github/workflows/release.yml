@@ -11,12 +11,21 @@ jobs:
     strategy:
       matrix:
         distro:
-          - alpine
+          #- alpine
           - debian
         include:
-          - distro: alpine
-            platforms: >-
-              linux/386, linux/amd64, linux/arm/v7, linux/arm64/v8,
+          # - distro: alpine
+          #   # linux/arm/v6 image doesn't work properly due to the following runtime error:
+          #   #
+          #   #   /lib/ld-musl-arm.so.1: No such file or directory
+          #   #
+          #   # This issue may be able to fix, but we stopped the linux/arm/v6 support because we
+          #   # don't have time to investigate the root cause of this issue.  PR welcome.
+          #   platforms: >-
+          #     linux/386,
+          #     linux/amd64,
+          #     linux/arm/v7,
+          #     linux/arm64/v8,
           - distro: debian
             platforms: >-
               linux/386, linux/amd64, linux/arm/v7, linux/arm64/v8,
