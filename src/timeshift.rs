@@ -740,20 +740,16 @@ impl StreamHandler<io::Result<String>> for TimeshiftRecorder {
         };
 
         match msg {
-            TimeshiftRecorderMessage::Start(msg) => {
-                debug_assert_eq!(self.name, msg.id);
+            TimeshiftRecorderMessage::Start(_msg) => {
                 self.handle_start_recording();
             }
             TimeshiftRecorderMessage::Stop(msg) => {
-                debug_assert_eq!(self.name, msg.id);
                 self.handle_stop_recording(msg.reset);
             }
             TimeshiftRecorderMessage::Chunk(msg) => {
-                debug_assert_eq!(self.name, msg.id);
                 self.handle_chunk(msg.chunk);
             }
             TimeshiftRecorderMessage::EventStart(msg) => {
-                debug_assert_eq!(self.name, msg.id);
                 let quad = EventQuad::new(
                     msg.original_network_id,
                     msg.transport_stream_id,
@@ -762,7 +758,6 @@ impl StreamHandler<io::Result<String>> for TimeshiftRecorder {
                 self.handle_event_start(quad, msg.event, msg.record);
             }
             TimeshiftRecorderMessage::EventUpdate(msg) => {
-                debug_assert_eq!(self.name, msg.id);
                 let quad = EventQuad::new(
                     msg.original_network_id,
                     msg.transport_stream_id,
@@ -771,7 +766,6 @@ impl StreamHandler<io::Result<String>> for TimeshiftRecorder {
                 self.handle_event_update(quad, msg.event, msg.record);
             }
             TimeshiftRecorderMessage::EventEnd(msg) => {
-                debug_assert_eq!(self.name, msg.id);
                 let quad = EventQuad::new(
                     msg.original_network_id,
                     msg.transport_stream_id,
@@ -802,28 +796,23 @@ enum TimeshiftRecorderMessage {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct TimeshiftRecorderStartMessage {
-    id: String,
-}
+struct TimeshiftRecorderStartMessage;
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct TimeshiftRecorderStopMessage {
-    id: String,
     reset: bool,
 }
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct TimeshiftRecorderChunkMessage {
-    id: String,
     chunk: TimeshiftPoint,
 }
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct TimeshiftRecorderEventMessage {
-    id: String,
     original_network_id: NetworkId,
     transport_stream_id: TransportStreamId,
     service_id: ServiceId,

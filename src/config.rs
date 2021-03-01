@@ -398,8 +398,7 @@ impl Default for RecorderConfig {
             track_airtime_command: "mirakc-arib track-airtime \
                                     --sid={{{sid}}} --eid={{{eid}}}".to_string(),
             record_service_command:
-            "mirakc-arib record-service \
-             --id={{name}} --sid={{{sid}}} --file={{{file}}} \
+            "mirakc-arib record-service --sid={{{sid}}} --file={{{file}}} \
              --chunk-size={{{chunk_size}}} --num-chunks={{{num_chunks}}}".to_string(),
         }
     }
