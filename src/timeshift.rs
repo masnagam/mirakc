@@ -235,14 +235,14 @@ impl Handler<NotifyServicesUpdatedMessage> for TimeshiftManager {
         for (name, config) in self.config.clone().timeshift.iter() {
             let triple = ServiceTriple::from(config.service_triple.clone());
             if msg.services.contains_key(&triple) {
-                log::info!("{}: Service#{} is available, activate",name, triple);
+                log::info!("{}: Service#{} is available, activate", name, triple);
                 let service = msg.services[&triple].clone();
                 self.recorders[name].do_send(ActivateTimeshiftRecorderMessage {
                     service,
                     tuner_manager: self.tuner_manager.clone(),
                 });
             } else {
-                log::warn!("{}: Service#{} is unavailable, deactivate",name, triple);
+                log::warn!("{}: Service#{} is unavailable, deactivate", name, triple);
                 self.recorders[name].do_send(DeactivateTimeshiftRecorderMessage);
             }
         }
