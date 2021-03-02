@@ -418,7 +418,6 @@ async fn get_program_stream(
 
     let mut builder = FilterPipelineBuilder::new(data);
     builder.add_pre_filters(&config.pre_filters, &filter_setting.pre_filters)?;
-    builder.add_service_filter(&config.filters.service_filter)?;
     if !stream.is_decoded() && filter_setting.decode {
         builder.add_decode_filter(&config.filters.decode_filter)?;
     }

@@ -495,7 +495,6 @@ impl TimeshiftRecorder {
             .insert("sid", &activation.service.sid)?
             .build();
         let mut builder = FilterPipelineBuilder::new(data);
-        builder.add_service_filter(&activation.config.filters.service_filter)?;
         // NOTE
         // ----
         // We always decode stream before recording in order to make it easy to support seeking.
@@ -509,7 +508,6 @@ impl TimeshiftRecorder {
         let (mut cmds, _) = builder.build();
 
         let data = mustache::MapBuilder::new()
-            .insert_str("name", &activation.name)
             .insert("sid", &activation.service.sid)?
             .insert_str("file", &config.file)
             .insert("chunk_size", &config.chunk_size)?
@@ -740,7 +738,7 @@ impl StreamHandler<io::Result<String>> for TimeshiftRecorder {
         };
 
         match msg {
-            TimeshiftRecorderMessage::Start(_msg) => {
+            TimeshiftRecorderMessage::Start => {
                 self.handle_start_recording();
             }
             TimeshiftRecorderMessage::Stop(msg) => {
@@ -786,7 +784,7 @@ impl StreamHandler<io::Result<String>> for TimeshiftRecorder {
 #[serde(rename_all = "kebab-case")]
 #[serde(tag = "type", content = "data")]
 enum TimeshiftRecorderMessage {
-    Start(TimeshiftRecorderStartMessage),
+    Start,
     Stop(TimeshiftRecorderStopMessage),
     Chunk(TimeshiftRecorderChunkMessage),
     EventStart(TimeshiftRecorderEventMessage),

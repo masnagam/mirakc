@@ -48,12 +48,11 @@ mirakc has a pipeline to process MPEG-TS packets.
     |  | pre-filters (external process) [optional]    |
     |  |   |                                          |
     |  |   V                                          |
-    |  | service-filter (external process) [optional] |
-    |  |   |                                          |
-    |  |   V                                          |
     |  | decode-filter (external process) [optional]  |
     |  |   |                                          |
     |  |   V                                          |
+    |  | service-filter (external process) [optional] |
+    |  |   or                                         |
     |  | program-filter (external process) [optional] |
     |  |   |                                          |
     |  |   V                                          |
