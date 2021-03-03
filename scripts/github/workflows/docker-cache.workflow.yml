@@ -1,0 +1,80 @@
+name: Docker Cache
+
+on:
+  repository_dispatch:
+    types:
+      - docker-cache
+
+jobs:
+  docker-cache:
+    strategy:
+      matrix:
+        distro:
+          #- alpine
+          - debian
+        include:
+          # - distro: alpine
+          #   # linux/arm/v6 image doesn't work properly due to the following runtime error:
+          #   #
+          #   #   /lib/ld-musl-arm.so.1: No such file or directory
+          #   #
+          #   # This issue may be able to fix, but we stopped the linux/arm/v6 support because we
+          #   # don't have time to investigate the root cause of this issue.  PR welcome.
+          #   platforms: >-
+          #     linux/386,
+          #     linux/amd64,
+          #     linux/arm/v7,
+          #     linux/arm64/v8,
+          - distro: debian
+            # docker/setup-*-action has not supported linux/arm/v5.
+            platforms: >-
+              linux/386,
+              linux/amd64,
+              linux/arm/v7,
+              linux/arm64/v8,
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - name: Setup QEMU user-mode emulation
+        uses: docker/setup-qemu-action@v1
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v1
+      - name: Login to Docker Hub
+        uses: docker/login-action@v1
+        with:
+          username: ${{ secrets.DOCKERHUB_USER }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Build and push mirakc/buildenv
+        uses: docker/build-push-action@v2
+        with:
+          context: .
+          file: docker/Dockerfile.${{ matrix.distro }}
+          target: buildenv
+          platforms: ${{ matrix.platforms }}
+          tags: mirakc/buildenv:${{ github.event.client_payload.version }}-${{ matrix-distro }}
+          push: true
+      - name: Build and push mirakc/tools
+        uses: docker/build-push-action@v2
+        with:
+          context: .
+          file: docker/Dockerfile.${{ matrix.distro }}
+          target: mirakc-tools
+          platforms: ${{ matrix.platforms }}
+          tags: mirakc/tools:${{ github.event.client_payload.version }}-${{ matrix-distro }}
+          cache-from: |
+            mirakc/buildenv:${{ github.event.client_payload.version }}-${{ matrix-distro }}
+          push: true
+      - name: Test
+        run: |
+          # Enable experimental CLI features in Docker daemon.
+          echo '{"experimental":true}' | sudo tee /etc/docker/daemon.json
+          sudo service docker restart
+
+          IMG="mirakc/tools:${{ github.event.client_payload.version }}-${{ matrix-distro }}"
+          for platform in $(echo ${{ matrix.platforms }} | tr ',' ' ')
+          do
+            echo "Testing $IMG for $platform..."
+            docker run --rm --platform=$platform --entrypoint=recdvb $IMG --version
+            docker run --rm --platform=$platform --entrypoint=recpt1 $IMG --version
+            docker run --rm --platform=$platform --entrypoint=mirakc-arib $IMG --version
+          done

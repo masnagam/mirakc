@@ -46,3 +46,10 @@ $($DOCKER run --rm -v $BASEDIR/github/workflows:/workdir mikefarah/yq:3 yq m \
     auto-merge.job.yml \
 )
 EOF
+
+cat <<EOF >$PROJDIR/.github/workflows/docker-cache.yml
+$HEADER
+$($DOCKER run --rm -v $BASEDIR/github/workflows:/workdir mikefarah/yq:3 yq m \
+    docker-cache.workflow.yml \
+)
+EOF
