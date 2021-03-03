@@ -169,6 +169,7 @@ jobs:
             if [ "$MAIN_DISTRO" = "${{ matrix.distro }}" ]; then
               TAGS="$TAGS,$IMAGE:$GIT_BRANCH"
             fi
+            VERSION="$GIT_BRANCH"
           else
             GIT_TAG=$(echo "$GITHUB_REF" | sed -e 's|^refs/tags/||')
             MAIN_TAG="$IMAGE:$GIT_TAG-${{ matrix.distro }}"
@@ -181,11 +182,14 @@ jobs:
             if [ "$MAIN_DISTRO" = "${{ matrix.distro }}" ]; then
               TAGS="$TAGS,$IMAGE:latest"
             fi
+            VERSION="$GIT_TAG"
           fi
           echo "Main tag: $MAIN_TAG"
           echo "Tags: $TAGS"
+          echo "Version: $VERSION"
           echo "::set-output name=main-tag::$MAIN_TAG"
           echo "::set-output name=tags::$TAGS"
+          echo "::set-output name=version::$VERSION"
       - name: Setup QEMU user-mode emulation
         uses: docker/setup-qemu-action@v1
       - name: Setup Docker Buildx
@@ -212,7 +216,10 @@ jobs:
           file: docker/Dockerfile.${{ matrix.distro }}
           platforms: ${{ matrix.platforms }}
           tags: ${{ steps.docker-tags.outputs.tags }}
-          cache-from: type=local,src=/tmp/.buildx-cache
+          cache-from: |
+            mirakc/buildenv:${{ steps.docker-tags.outputs.version }}-${{ matrix.distro }}
+            mirakc/tools:${{ steps.docker-tags.outputs.version }}-${{ matrix.distro }}
+            type=local,src=/tmp/.buildx-cache
           cache-to: type=local,dest=/tmp/.buildx-cache
           push: true
       - name: Test
