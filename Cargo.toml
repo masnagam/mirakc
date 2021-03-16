@@ -24,7 +24,7 @@ humantime = "2.1.0"
 indexmap = { version = "1.6.2", features = ["serde-1"] }
 libc = "0.2.87"
 log = "0.4.14"
-mio = "0.6.22"
+mio = "0.7.10"
 mustache = "0.9.0"
 num_cpus = "1.13.0"
 serde = { version = "1.0.124", features = ["derive", "rc"] }
