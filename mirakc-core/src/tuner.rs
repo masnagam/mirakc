@@ -966,7 +966,7 @@ mod tests {
 
         {
             let config: Arc<Config> = Arc::new(
-                serde_yaml::from_str(
+                serde_yml::from_str(
                     r#"
                 tuners:
                   - name: bs
@@ -1064,7 +1064,7 @@ mod tests {
     #[test(tokio::test)]
     async fn test_start_streaming_grab_lowest_priority_tuner() {
         let config: Arc<Config> = Arc::new(
-            serde_yaml::from_str(
+            serde_yml::from_str(
                 r#"
                 tuners:
                   - name: gr1

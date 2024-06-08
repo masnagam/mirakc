@@ -5,7 +5,7 @@ use serde::Deserialize;
 
 pub fn load(path: &str) -> Arc<StringTable> {
     let reader = File::open(path).unwrap_or_else(|err| panic!("Failed to open {}: {}", path, err));
-    let string_table: StringTable = serde_yaml::from_reader(reader)
+    let string_table: StringTable = serde_yml::from_reader(reader)
         .unwrap_or_else(|err| panic!("Failed to parse {}: {}", path, err));
     Arc::new(string_table)
 }
@@ -34,11 +34,11 @@ mod tests {
 
     #[test]
     fn test_epg_genre_string_table() {
-        let result = serde_yaml::from_str::<EpgGenreStringTable>("{}");
+        let result = serde_yml::from_str::<EpgGenreStringTable>("{}");
         assert!(result.is_err());
 
         assert_eq!(
-            serde_yaml::from_str::<EpgGenreStringTable>(
+            serde_yml::from_str::<EpgGenreStringTable>(
                 r#"
                 genre: 'name'
                 subgenres:

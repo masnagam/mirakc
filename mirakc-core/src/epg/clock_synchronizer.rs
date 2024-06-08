@@ -173,7 +173,7 @@ mod tests {
             serde_json::to_string(&expected).unwrap()
         );
 
-        let config = Arc::new(serde_yaml::from_str::<Config>(&config_yml).unwrap());
+        let config = Arc::new(serde_yml::from_str::<Config>(&config_yml).unwrap());
 
         let sync = ClockSynchronizer::new(config, stub.clone());
         let results = sync.sync_clocks().await;
@@ -191,7 +191,7 @@ mod tests {
 
         // Emulate out of services by using `false`
         let config = Arc::new(
-            serde_yaml::from_str::<Config>(
+            serde_yml::from_str::<Config>(
                 r#"
             channels:
               - name: channel

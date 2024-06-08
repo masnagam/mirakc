@@ -24,7 +24,7 @@ pub fn load<P: AsRef<Path>>(config_path: P) -> Arc<Config> {
     let reader = File::open(config_path).unwrap_or_else(|err| {
         panic!("Failed to open {:?}: {}", config_path, err);
     });
-    let mut config: Config = serde_yaml::from_reader(reader).unwrap_or_else(|err| {
+    let mut config: Config = serde_yml::from_reader(reader).unwrap_or_else(|err| {
         panic!("Failed to parse {:?}: {}", config_path, err);
     });
 
@@ -45,12 +45,12 @@ pub fn load<P: AsRef<Path>>(config_path: P) -> Arc<Config> {
 
 // Use the widely used map-style representation for enum types in YAML.
 //
-// `serde_yaml` serializes enum types using YAML tags by default.
+// `serde_yml` serializes enum types using YAML tags by default.
 // This makes it impossible for other YAML libraries such as js-yaml to parse
 // config.yml without a custom schema definition for config.yml.
 //
-// Specify `#[serde(with = "serde_yaml::with::singleton_map_recursive")]` or
-// `#[serde(with = "serde_yaml::with::singleton_map")]` to every field
+// Specify `#[serde(with = "serde_yml::with::singleton_map_recursive")]` or
+// `#[serde(with = "serde_yml::with::singleton_map")]` to every field
 // containing contains enum types which should be represented with the map-style
 // in YAML.
 
@@ -82,7 +82,7 @@ pub struct Config {
     #[serde(default)]
     pub timeshift: TimeshiftConfig,
     #[serde(default)]
-    #[serde(with = "serde_yaml::with::singleton_map_recursive")]
+    #[serde(with = "serde_yml::with::singleton_map_recursive")]
     pub onair_program_trackers: IndexMap<String, OnairProgramTrackerConfig>,
     #[serde(default)]
     pub resource: ResourceConfig,
@@ -234,7 +234,7 @@ impl EpgConfig {
 #[serde(deny_unknown_fields)]
 pub struct ServerConfig {
     #[serde(default = "ServerConfig::default_addrs")]
-    #[serde(with = "serde_yaml::with::singleton_map_recursive")]
+    #[serde(with = "serde_yml::with::singleton_map_recursive")]
     pub addrs: Vec<ServerAddr>,
     #[serde(default = "ServerConfig::default_stream_max_chunks")]
     pub stream_max_chunks: usize,
@@ -1086,7 +1086,7 @@ impl LocalOnairProgramTrackerUses {
 #[serde(deny_unknown_fields)]
 #[cfg_attr(test, derive(Debug))]
 pub struct RemoteOnairProgramTrackerConfig {
-    #[serde(with = "serde_yaml::with::singleton_map")]
+    #[serde(with = "serde_yml::with::singleton_map")]
     pub url: Url,
     #[serde(default)]
     pub services: HashSet<ServiceId>,
@@ -1222,11 +1222,11 @@ mod tests {
     #[test]
     fn test_config() {
         assert_eq!(
-            serde_yaml::from_str::<Config>("{}").unwrap(),
+            serde_yml::from_str::<Config>("{}").unwrap(),
             Default::default()
         );
 
-        let result = serde_yaml::from_str::<Config>(
+        let result = serde_yml::from_str::<Config>(
             r#"
             unknown:
               property: value
@@ -1239,7 +1239,7 @@ mod tests {
     fn test_config_has_onair_program_trackers() {
         assert!(!Config::default().has_onair_program_trackers());
 
-        let config = serde_yaml::from_str::<Config>(
+        let config = serde_yml::from_str::<Config>(
             r#"
             onair-program-trackers:
               test:
@@ -1260,7 +1260,7 @@ mod tests {
 
     #[test]
     fn test_config_validate_channel_names() {
-        let config = serde_yaml::from_str::<Config>(
+        let config = serde_yml::from_str::<Config>(
             r#"
             channels:
               - name: test
@@ -1280,7 +1280,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "config.tuners: `name` must be a unique")]
     fn test_config_validate_tuner_names() {
-        let config = serde_yaml::from_str::<Config>(
+        let config = serde_yml::from_str::<Config>(
             r#"
             tuners:
               - name: test
@@ -1302,7 +1302,7 @@ mod tests {
         expected = "config.onair-program-trackers[tracker]: uses undefined tuner[tuner]"
     )]
     fn test_config_validate_tracker_uses_undefined_tuner() {
-        let config = serde_yaml::from_str::<Config>(
+        let config = serde_yml::from_str::<Config>(
             r#"
             tuners:
               - name: test
@@ -1325,7 +1325,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "config.tuners[test]: dedicated for OnairProgramTracker(tracker1)")]
     fn test_config_validate_tuner_usage_conflict() {
-        let config = serde_yaml::from_str::<Config>(
+        let config = serde_yml::from_str::<Config>(
             r#"
             tuners:
               - name: test
@@ -1352,7 +1352,7 @@ mod tests {
 
     #[test]
     fn test_config_validate_tuner_dedicated_for_onair_tracker() {
-        let config = serde_yaml::from_str::<Config>(
+        let config = serde_yml::from_str::<Config>(
             r#"
             tuners:
               - name: test
@@ -1383,7 +1383,7 @@ mod tests {
             let _ = libc::fallocate64(ts_file.as_raw_fd(), 0, 0, ts_file_size);
         }
         let data_file = tempfile::Builder::new().suffix(".json").tempfile().unwrap();
-        let config = serde_yaml::from_str::<Config>(&format!(
+        let config = serde_yml::from_str::<Config>(&format!(
             r#"
             channels:
               - name: test
@@ -1427,7 +1427,7 @@ mod tests {
             let _ = libc::fallocate64(ts_file.as_raw_fd(), 0, 0, ts_file_size);
         }
         let data_file = tempfile::Builder::new().suffix(".json").tempfile().unwrap();
-        let config = serde_yaml::from_str::<Config>(&format!(
+        let config = serde_yml::from_str::<Config>(&format!(
             r#"
             channels:
               - name: test
@@ -1473,7 +1473,7 @@ mod tests {
             let _ = libc::fallocate64(ts_file.as_raw_fd(), 0, 0, ts_file_size);
         }
         let data_file = tempfile::Builder::new().suffix(".json").tempfile().unwrap();
-        let config = serde_yaml::from_str::<Config>(&format!(
+        let config = serde_yml::from_str::<Config>(&format!(
             r#"
             channels:
               - name: test
@@ -1508,12 +1508,12 @@ mod tests {
     #[test]
     fn test_epg_config() {
         assert_eq!(
-            serde_yaml::from_str::<EpgConfig>("{}").unwrap(),
+            serde_yml::from_str::<EpgConfig>("{}").unwrap(),
             Default::default()
         );
 
         assert_eq!(
-            serde_yaml::from_str::<EpgConfig>(
+            serde_yml::from_str::<EpgConfig>(
                 r#"
                 cache-dir: /path/to/epg
             "#
@@ -1524,7 +1524,7 @@ mod tests {
             }
         );
 
-        let result = serde_yaml::from_str::<EpgConfig>(
+        let result = serde_yml::from_str::<EpgConfig>(
             r#"
             unknown:
               property: value
@@ -1550,14 +1550,14 @@ mod tests {
     #[test]
     fn test_server_config() {
         assert_eq!(
-            serde_yaml::from_str::<ServerConfig>("{}").unwrap(),
+            serde_yml::from_str::<ServerConfig>("{}").unwrap(),
             Default::default()
         );
 
         let mut config = ServerConfig::default();
         config.addrs = vec![ServerAddr::Http("0.0.0.0:40772".to_string())];
         assert_eq!(
-            serde_yaml::from_str::<ServerConfig>(
+            serde_yml::from_str::<ServerConfig>(
                 r#"
                 addrs:
                   - http: '0.0.0.0:40772'
@@ -1570,7 +1570,7 @@ mod tests {
         let mut config = ServerConfig::default();
         config.addrs = vec![ServerAddr::Unix("/path/to/sock".into())];
         assert_eq!(
-            serde_yaml::from_str::<ServerConfig>(
+            serde_yml::from_str::<ServerConfig>(
                 r#"
                 addrs:
                   - unix: /path/to/sock
@@ -1586,7 +1586,7 @@ mod tests {
             ServerAddr::Unix("/path/to/sock".into()),
         ];
         assert_eq!(
-            serde_yaml::from_str::<ServerConfig>(
+            serde_yml::from_str::<ServerConfig>(
                 r#"
                 addrs:
                   - http: '0.0.0.0:40772'
@@ -1600,7 +1600,7 @@ mod tests {
         let mut config = ServerConfig::default();
         config.stream_max_chunks = 1000;
         assert_eq!(
-            serde_yaml::from_str::<ServerConfig>(
+            serde_yml::from_str::<ServerConfig>(
                 r#"
                 stream-max-chunks: 1000
             "#
@@ -1612,7 +1612,7 @@ mod tests {
         let mut config = ServerConfig::default();
         config.stream_chunk_size = 10000;
         assert_eq!(
-            serde_yaml::from_str::<ServerConfig>(
+            serde_yml::from_str::<ServerConfig>(
                 r#"
                 stream-chunk-size: 10000
             "#
@@ -1624,7 +1624,7 @@ mod tests {
         let mut config = ServerConfig::default();
         config.stream_time_limit = 10000;
         assert_eq!(
-            serde_yaml::from_str::<ServerConfig>(
+            serde_yml::from_str::<ServerConfig>(
                 r#"
                 stream-time-limit: 10000
             "#
@@ -1636,7 +1636,7 @@ mod tests {
         let mut config = ServerConfig::default();
         config.program_stream_max_start_delay = Some(Duration::from_secs(3600));
         assert_eq!(
-            serde_yaml::from_str::<ServerConfig>(
+            serde_yml::from_str::<ServerConfig>(
                 r#"
                 program-stream-max-start-delay: 1h
             "#
@@ -1664,7 +1664,7 @@ mod tests {
             },
         };
         assert_eq!(
-            serde_yaml::from_str::<ServerConfig>(
+            serde_yml::from_str::<ServerConfig>(
                 r#"
                 mounts:
                   /ui:
@@ -1684,7 +1684,7 @@ mod tests {
         let mut config = ServerConfig::default();
         config.folder_view_template_path = Some("/path/to/listing.html.mustache".into());
         assert_eq!(
-            serde_yaml::from_str::<ServerConfig>(
+            serde_yml::from_str::<ServerConfig>(
                 r#"
                 folder-view-template-path: /path/to/listing.html.mustache
             "#
@@ -1693,7 +1693,7 @@ mod tests {
             config
         );
 
-        let result = serde_yaml::from_str::<ServerConfig>(
+        let result = serde_yml::from_str::<ServerConfig>(
             r#"
             unknown:
               property: value
@@ -1720,7 +1720,7 @@ mod tests {
 
     #[test]
     fn test_server_config_validate_max_start_delay() {
-        let config = serde_yaml::from_str::<ServerConfig>(
+        let config = serde_yml::from_str::<ServerConfig>(
             r#"
             program-stream-max-start-delay: 1h
         "#,
@@ -1728,7 +1728,7 @@ mod tests {
         .unwrap();
         config.validate();
 
-        let config = serde_yaml::from_str::<ServerConfig>(
+        let config = serde_yml::from_str::<ServerConfig>(
             r#"
             program-stream-max-start-delay: 23h 59m 59s
         "#,
@@ -1742,7 +1742,7 @@ mod tests {
         expected = "config.server.program-stream-max-start-delay: must not be less than 24h"
     )]
     fn test_server_config_validate_max_start_delay_less_than_24h() {
-        let config = serde_yaml::from_str::<ServerConfig>(
+        let config = serde_yml::from_str::<ServerConfig>(
             r#"
             program-stream-max-start-delay: 24h
         "#,
@@ -1854,7 +1854,7 @@ mod tests {
 
     #[test]
     fn test_channel_config() {
-        assert!(serde_yaml::from_str::<ChannelConfig>("{}").is_err());
+        assert!(serde_yml::from_str::<ChannelConfig>("{}").is_err());
 
         fn channel_config() -> ChannelConfig {
             ChannelConfig {
@@ -1870,7 +1870,7 @@ mod tests {
 
         let config = channel_config();
         assert_eq!(
-            serde_yaml::from_str::<ChannelConfig>(
+            serde_yml::from_str::<ChannelConfig>(
                 r#"
                 name: x
                 type: GR
@@ -1884,7 +1884,7 @@ mod tests {
         let mut config = channel_config();
         config.extra_args = "--extra args".to_string();
         assert_eq!(
-            serde_yaml::from_str::<ChannelConfig>(
+            serde_yml::from_str::<ChannelConfig>(
                 r#"
                 name: x
                 type: GR
@@ -1899,7 +1899,7 @@ mod tests {
         let mut config = channel_config();
         config.disabled = true;
         assert_eq!(
-            serde_yaml::from_str::<ChannelConfig>(
+            serde_yml::from_str::<ChannelConfig>(
                 r#"
                 name: x
                 type: GR
@@ -1914,7 +1914,7 @@ mod tests {
         let mut config = channel_config();
         config.excluded_services = vec![100.into()];
         assert_eq!(
-            serde_yaml::from_str::<ChannelConfig>(
+            serde_yml::from_str::<ChannelConfig>(
                 r#"
                 name: x
                 type: GR
@@ -1926,7 +1926,7 @@ mod tests {
             config
         );
 
-        assert!(serde_yaml::from_str::<ChannelConfig>(
+        assert!(serde_yml::from_str::<ChannelConfig>(
             r#"
                 name: x
                 type: WOWOW
@@ -1935,7 +1935,7 @@ mod tests {
         )
         .is_err());
 
-        let result = serde_yaml::from_str::<ChannelConfig>(
+        let result = serde_yml::from_str::<ChannelConfig>(
             r#"
             unknown:
               property: value
@@ -1963,7 +1963,7 @@ mod tests {
         config2.channel = "2".to_string();
         assert_eq!(
             ChannelConfig::normalize(
-                serde_yaml::from_str::<Vec<ChannelConfig>>(
+                serde_yml::from_str::<Vec<ChannelConfig>>(
                     r#"
                 - name: ch
                   type: GR
@@ -1983,7 +1983,7 @@ mod tests {
         config.excluded_services = vec![3.into(), 4.into()];
         assert_eq!(
             ChannelConfig::normalize(
-                serde_yaml::from_str::<Vec<ChannelConfig>>(
+                serde_yml::from_str::<Vec<ChannelConfig>>(
                     r#"
                 - name: ch
                   type: GR
@@ -2007,7 +2007,7 @@ mod tests {
         config.excluded_services = vec![3.into(), 4.into()];
         assert_eq!(
             ChannelConfig::normalize(
-                serde_yaml::from_str::<Vec<ChannelConfig>>(
+                serde_yml::from_str::<Vec<ChannelConfig>>(
                     r#"
                 - name: ch
                   type: GR
@@ -2031,7 +2031,7 @@ mod tests {
         config.excluded_services = vec![3.into(), 4.into()];
         assert_eq!(
             ChannelConfig::normalize(
-                serde_yaml::from_str::<Vec<ChannelConfig>>(
+                serde_yml::from_str::<Vec<ChannelConfig>>(
                     r#"
                 - name: ch
                   type: GR
@@ -2053,7 +2053,7 @@ mod tests {
         let config = channel_config();
         assert_eq!(
             ChannelConfig::normalize(
-                serde_yaml::from_str::<Vec<ChannelConfig>>(
+                serde_yml::from_str::<Vec<ChannelConfig>>(
                     r#"
                 - name: ch
                   type: GR
@@ -2072,7 +2072,7 @@ mod tests {
         let config = channel_config();
         assert_eq!(
             ChannelConfig::normalize(
-                serde_yaml::from_str::<Vec<ChannelConfig>>(
+                serde_yml::from_str::<Vec<ChannelConfig>>(
                     r#"
                 - name: ch
                   type: GR
@@ -2125,14 +2125,14 @@ mod tests {
 
     #[test]
     fn test_tuner_config() {
-        assert!(serde_yaml::from_str::<TunerConfig>("{}").is_err());
+        assert!(serde_yml::from_str::<TunerConfig>("{}").is_err());
 
         let mut config = TunerConfig::default();
         config.name = "x".to_string();
         config.channel_types = vec![ChannelType::GR];
         config.command = "open tuner".to_string();
         assert_eq!(
-            serde_yaml::from_str::<TunerConfig>(
+            serde_yml::from_str::<TunerConfig>(
                 r#"
                 name: x
                 types: [GR]
@@ -2149,7 +2149,7 @@ mod tests {
         config.command = "open tuner".to_string();
         config.time_limit = 1;
         assert_eq!(
-            serde_yaml::from_str::<TunerConfig>(
+            serde_yml::from_str::<TunerConfig>(
                 r#"
                 name: x
                 types: [GR]
@@ -2167,7 +2167,7 @@ mod tests {
         config.command = "open tuner".to_string();
         config.disabled = true;
         assert_eq!(
-            serde_yaml::from_str::<TunerConfig>(
+            serde_yml::from_str::<TunerConfig>(
                 r#"
                 name: x
                 types: [GR]
@@ -2185,7 +2185,7 @@ mod tests {
         config.command = "open tuner".to_string();
         config.decoded = true;
         assert_eq!(
-            serde_yaml::from_str::<TunerConfig>(
+            serde_yml::from_str::<TunerConfig>(
                 r#"
                 name: x
                 types: [GR]
@@ -2207,7 +2207,7 @@ mod tests {
         ];
         config.command = "open tuner".to_string();
         assert_eq!(
-            serde_yaml::from_str::<TunerConfig>(
+            serde_yml::from_str::<TunerConfig>(
                 r#"
                 name: x
                 types: [GR, BS, CS, SKY]
@@ -2218,7 +2218,7 @@ mod tests {
             config
         );
 
-        assert!(serde_yaml::from_str::<TunerConfig>(
+        assert!(serde_yml::from_str::<TunerConfig>(
             r#"
                 name: x
                 types: [WOWOW]
@@ -2227,7 +2227,7 @@ mod tests {
         )
         .is_err());
 
-        let result = serde_yaml::from_str::<TunerConfig>(
+        let result = serde_yml::from_str::<TunerConfig>(
             r#"
             unknown:
               property: value
@@ -2290,14 +2290,14 @@ mod tests {
     #[test]
     fn test_filters_config() {
         assert_eq!(
-            serde_yaml::from_str::<FiltersConfig>("{}").unwrap(),
+            serde_yml::from_str::<FiltersConfig>("{}").unwrap(),
             Default::default()
         );
 
         let mut config = FiltersConfig::default();
         config.tuner_filter.command = "filter".to_string();
         assert_eq!(
-            serde_yaml::from_str::<FiltersConfig>(
+            serde_yml::from_str::<FiltersConfig>(
                 r#"
                 tuner-filter:
                   command: filter
@@ -2310,7 +2310,7 @@ mod tests {
         let mut config = FiltersConfig::default();
         config.service_filter.command = "filter".to_string();
         assert_eq!(
-            serde_yaml::from_str::<FiltersConfig>(
+            serde_yml::from_str::<FiltersConfig>(
                 r#"
                 service-filter:
                   command: filter
@@ -2323,7 +2323,7 @@ mod tests {
         let mut config = FiltersConfig::default();
         config.decode_filter.command = "filter".to_string();
         assert_eq!(
-            serde_yaml::from_str::<FiltersConfig>(
+            serde_yml::from_str::<FiltersConfig>(
                 r#"
                 decode-filter:
                   command: filter
@@ -2336,7 +2336,7 @@ mod tests {
         let mut config = FiltersConfig::default();
         config.program_filter.command = "filter".to_string();
         assert_eq!(
-            serde_yaml::from_str::<FiltersConfig>(
+            serde_yml::from_str::<FiltersConfig>(
                 r#"
                 program-filter:
                   command: filter
@@ -2346,7 +2346,7 @@ mod tests {
             config
         );
 
-        let result = serde_yaml::from_str::<FiltersConfig>(
+        let result = serde_yml::from_str::<FiltersConfig>(
             r#"
             unknown:
               property: value
@@ -2358,14 +2358,14 @@ mod tests {
     #[test]
     fn test_filter_config() {
         assert_eq!(
-            serde_yaml::from_str::<FilterConfig>("{}").unwrap(),
+            serde_yml::from_str::<FilterConfig>("{}").unwrap(),
             Default::default()
         );
 
         let mut config = FilterConfig::default();
         config.command = "filter".to_string();
         assert_eq!(
-            serde_yaml::from_str::<FilterConfig>(
+            serde_yml::from_str::<FilterConfig>(
                 r#"
                 command: filter
             "#
@@ -2374,7 +2374,7 @@ mod tests {
             config
         );
 
-        let result = serde_yaml::from_str::<FilterConfig>(
+        let result = serde_yml::from_str::<FilterConfig>(
             r#"
             unknown:
               property: value
@@ -2399,14 +2399,14 @@ mod tests {
     #[test]
     fn test_post_filter_config() {
         assert_eq!(
-            serde_yaml::from_str::<PostFilterConfig>("{}").unwrap(),
+            serde_yml::from_str::<PostFilterConfig>("{}").unwrap(),
             Default::default()
         );
 
         let mut config = PostFilterConfig::default();
         config.command = "filter".to_string();
         assert_eq!(
-            serde_yaml::from_str::<PostFilterConfig>(
+            serde_yml::from_str::<PostFilterConfig>(
                 r#"
                 command: filter
             "#
@@ -2419,7 +2419,7 @@ mod tests {
         config.command = "filter".to_string();
         config.content_type = Some("video/mp4".to_string());
         assert_eq!(
-            serde_yaml::from_str::<PostFilterConfig>(
+            serde_yml::from_str::<PostFilterConfig>(
                 r#"
                 command: filter
                 content-type: video/mp4
@@ -2429,7 +2429,7 @@ mod tests {
             config
         );
 
-        let result = serde_yaml::from_str::<PostFilterConfig>(
+        let result = serde_yml::from_str::<PostFilterConfig>(
             r#"
             unknown:
               property: value
@@ -2465,7 +2465,7 @@ mod tests {
     #[test]
     fn test_jobs_config() {
         assert_eq!(
-            serde_yaml::from_str::<JobsConfig>("{}").unwrap(),
+            serde_yml::from_str::<JobsConfig>("{}").unwrap(),
             Default::default()
         );
 
@@ -2473,7 +2473,7 @@ mod tests {
         config.scan_services.command = "job".to_string();
         config.scan_services.schedule = "*".to_string();
         assert_eq!(
-            serde_yaml::from_str::<JobsConfig>(
+            serde_yml::from_str::<JobsConfig>(
                 r#"
                 scan-services:
                   command: job
@@ -2488,7 +2488,7 @@ mod tests {
         config.sync_clocks.command = "job".to_string();
         config.sync_clocks.schedule = "*".to_string();
         assert_eq!(
-            serde_yaml::from_str::<JobsConfig>(
+            serde_yml::from_str::<JobsConfig>(
                 r#"
                 sync-clocks:
                   command: job
@@ -2503,7 +2503,7 @@ mod tests {
         config.update_schedules.command = "job".to_string();
         config.update_schedules.schedule = "*".to_string();
         assert_eq!(
-            serde_yaml::from_str::<JobsConfig>(
+            serde_yml::from_str::<JobsConfig>(
                 r#"
                 update-schedules:
                   command: job
@@ -2514,7 +2514,7 @@ mod tests {
             config
         );
 
-        let result = serde_yaml::from_str::<JobsConfig>(
+        let result = serde_yml::from_str::<JobsConfig>(
             r#"
             unknown:
               property: value
@@ -2526,7 +2526,7 @@ mod tests {
     #[test]
     fn test_jobs_config_normalize() {
         assert_eq!(
-            serde_yaml::from_str::<JobsConfig>(
+            serde_yml::from_str::<JobsConfig>(
                 r#"
                 scan-services:
                   command: ''
@@ -2556,14 +2556,14 @@ mod tests {
         }
 
         assert_eq!(
-            serde_yaml::from_str::<JobConfig>("{}").unwrap(),
+            serde_yml::from_str::<JobConfig>("{}").unwrap(),
             job_config()
         );
 
         let mut config = job_config();
         config.command = "test".to_string();
         assert_eq!(
-            serde_yaml::from_str::<JobConfig>(
+            serde_yml::from_str::<JobConfig>(
                 r#"
                 command: test
             "#
@@ -2575,7 +2575,7 @@ mod tests {
         let mut config = job_config();
         config.schedule = "*".to_string();
         assert_eq!(
-            serde_yaml::from_str::<JobConfig>(
+            serde_yml::from_str::<JobConfig>(
                 r#"
                 schedule: '*'
             "#
@@ -2587,7 +2587,7 @@ mod tests {
         let mut config = job_config();
         config.disabled = true;
         assert_eq!(
-            serde_yaml::from_str::<JobConfig>(
+            serde_yml::from_str::<JobConfig>(
                 r#"
                 disabled: true
             "#
@@ -2596,7 +2596,7 @@ mod tests {
             config
         );
 
-        assert!(serde_yaml::from_str::<JobConfig>(
+        assert!(serde_yml::from_str::<JobConfig>(
             r#"
             unknown:
               property: value
@@ -2647,12 +2647,12 @@ mod tests {
     #[test]
     fn test_recording_config() {
         assert_eq!(
-            serde_yaml::from_str::<RecordingConfig>("{}").unwrap(),
+            serde_yml::from_str::<RecordingConfig>("{}").unwrap(),
             Default::default()
         );
 
         assert_eq!(
-            serde_yaml::from_str::<RecordingConfig>("basedir: /tmp").unwrap(),
+            serde_yml::from_str::<RecordingConfig>("basedir: /tmp").unwrap(),
             RecordingConfig {
                 basedir: Some("/tmp".into()),
                 ..Default::default()
@@ -2663,7 +2663,7 @@ mod tests {
     #[test]
     fn test_recording_is_enabled() {
         assert!(!RecordingConfig::default().is_enabled());
-        assert!(serde_yaml::from_str::<RecordingConfig>("basedir: /tmp")
+        assert!(serde_yml::from_str::<RecordingConfig>("basedir: /tmp")
             .unwrap()
             .is_enabled());
     }
@@ -2694,12 +2694,12 @@ mod tests {
     #[test]
     fn test_timeshift_config() {
         assert_eq!(
-            serde_yaml::from_str::<TimeshiftConfig>("{}").unwrap(),
+            serde_yml::from_str::<TimeshiftConfig>("{}").unwrap(),
             Default::default()
         );
 
         assert_eq!(
-            serde_yaml::from_str::<TimeshiftConfig>(
+            serde_yml::from_str::<TimeshiftConfig>(
                 r#"
                 command: command
                 recorders:
@@ -2723,7 +2723,7 @@ mod tests {
             },
         );
 
-        assert!(serde_yaml::from_str::<TimeshiftConfig>(
+        assert!(serde_yml::from_str::<TimeshiftConfig>(
             r#"
             unknown: property
         "#
@@ -2735,7 +2735,7 @@ mod tests {
     fn test_timeshift_is_enabled() {
         assert!(!TimeshiftConfig::default().is_enabled());
 
-        assert!(serde_yaml::from_str::<TimeshiftConfig>(
+        assert!(serde_yml::from_str::<TimeshiftConfig>(
             r#"
                 command: command
                 recorders:
@@ -2753,7 +2753,7 @@ mod tests {
         .unwrap()
         .is_enabled());
 
-        assert!(!serde_yaml::from_str::<TimeshiftConfig>(
+        assert!(!serde_yml::from_str::<TimeshiftConfig>(
             r#"
                 command: ''
                 recorders:
@@ -2805,9 +2805,9 @@ mod tests {
 
     #[test]
     fn test_timeshift_recorder_config() {
-        assert!(serde_yaml::from_str::<TimeshiftRecorderConfig>("{}").is_err());
+        assert!(serde_yml::from_str::<TimeshiftRecorderConfig>("{}").is_err());
 
-        assert!(serde_yaml::from_str::<TimeshiftRecorderConfig>(
+        assert!(serde_yml::from_str::<TimeshiftRecorderConfig>(
             r#"
             service-id: 1
             ts-file: /path/to/timeshift.m2ts
@@ -2823,7 +2823,7 @@ mod tests {
         .is_err());
 
         assert_eq!(
-            serde_yaml::from_str::<TimeshiftRecorderConfig>(
+            serde_yml::from_str::<TimeshiftRecorderConfig>(
                 r#"
                 service-id: 1
                 ts-file: /path/to/timeshift.m2ts
@@ -2840,7 +2840,7 @@ mod tests {
         );
 
         assert_eq!(
-            serde_yaml::from_str::<TimeshiftRecorderConfig>(
+            serde_yml::from_str::<TimeshiftRecorderConfig>(
                 r#"
                 service-id: 2
                 ts-file: /1.m2ts
@@ -3080,7 +3080,7 @@ mod tests {
     #[test]
     fn test_local_onair_program_tracker_config() {
         assert_eq!(
-            serde_yaml::from_str::<LocalOnairProgramTrackerConfig>(
+            serde_yml::from_str::<LocalOnairProgramTrackerConfig>(
                 r#"
                 channel-types: [GR]
                 uses:
@@ -3096,7 +3096,7 @@ mod tests {
         config.excluded_services = hashset![2.into()];
         config.command = "true".to_string();
         assert_eq!(
-            serde_yaml::from_str::<LocalOnairProgramTrackerConfig>(
+            serde_yml::from_str::<LocalOnairProgramTrackerConfig>(
                 r#"
                 channel-types: [GR]
                 services: [1]
@@ -3189,12 +3189,12 @@ mod tests {
     #[test]
     fn test_resource_config() {
         assert_eq!(
-            serde_yaml::from_str::<ResourceConfig>("{}").unwrap(),
+            serde_yml::from_str::<ResourceConfig>("{}").unwrap(),
             Default::default()
         );
 
         assert_eq!(
-            serde_yaml::from_str::<ResourceConfig>(
+            serde_yml::from_str::<ResourceConfig>(
                 r#"
                 strings-yaml: /path/to/strings.yml
             "#
@@ -3207,7 +3207,7 @@ mod tests {
         );
 
         assert_eq!(
-            serde_yaml::from_str::<ResourceConfig>(
+            serde_yml::from_str::<ResourceConfig>(
                 r#"
                 logos:
                   - service-id: 1
@@ -3223,7 +3223,7 @@ mod tests {
             }
         );
 
-        let result = serde_yaml::from_str::<ResourceConfig>(
+        let result = serde_yml::from_str::<ResourceConfig>(
             r#"
             unknown:
               property: value

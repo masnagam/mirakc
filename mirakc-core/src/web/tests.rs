@@ -1137,7 +1137,7 @@ fn config_for_test() -> Arc<Config> {
     );
 
     Arc::new(
-        serde_yaml::from_str::<Config>(&config_yaml)
+        serde_yml::from_str::<Config>(&config_yaml)
             .unwrap()
             .normalize(),
     )

@@ -1179,7 +1179,7 @@ mod tests {
         let ts_file = dir.as_ref().join("ts-file.m2ts");
         let data_file = dir.as_ref().join("data-file.json");
         Arc::new(
-            serde_yaml::from_str::<Config>(&format!(
+            serde_yml::from_str::<Config>(&format!(
                 r#"
                 timeshift:
                   command: true
